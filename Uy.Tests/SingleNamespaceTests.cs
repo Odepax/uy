@@ -18,7 +18,7 @@ namespace Uy.Tests;
 class SingleNamespaceTests {
 	[Test]
 	public void SingleNamespace() {
-		var uyNamespaces = typeof(Uy.Class1)
+		var uyNamespaces = typeof(Uy.Box4)
 			.Assembly
 			.GetTypes()
 			.Select(type => type.Namespace)
