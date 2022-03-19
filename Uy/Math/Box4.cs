@@ -438,6 +438,7 @@ public record struct Box4 {
 		T = T + angle.Sin() * length,
 	};
 
+	public void InflateBy(Margin4 margin) => InflateBy(margin.Top, margin.Right, margin.Bottom, margin.Left);
 	public void InflateBy(float all) => InflateBy(all, all, all, all);
 	public void InflateBy(float vertical, float horizontal) => InflateBy(vertical, horizontal, vertical, horizontal);
 	public void InflateBy(float top, float horizontal, float bottom) => InflateBy(top, horizontal, bottom, horizontal);
@@ -448,6 +449,7 @@ public record struct Box4 {
 		H += top + bottom;
 	}
 
+	public readonly Box4 Inflated(Margin4 margin) => Inflated(margin.Top, margin.Right, margin.Bottom, margin.Left);
 	public readonly Box4 Inflated(float all) => Inflated(all, all, all, all);
 	public readonly Box4 Inflated(float vertical, float horizontal) => Inflated(vertical, horizontal, vertical, horizontal);
 	public readonly Box4 Inflated(float top, float horizontal, float bottom) => Inflated(top, horizontal, bottom, horizontal);
@@ -458,6 +460,7 @@ public record struct Box4 {
 		H = H + top + bottom,
 	};
 
+	public void DeflateBy(Margin4 margin) => DeflateBy(margin.Top, margin.Right, margin.Bottom, margin.Left);
 	public void DeflateBy(float all) => DeflateBy(all, all, all, all);
 	public void DeflateBy(float vertical, float horizontal) => DeflateBy(vertical, horizontal, vertical, horizontal);
 	public void DeflateBy(float top, float horizontal, float bottom) => DeflateBy(top, horizontal, bottom, horizontal);
@@ -468,6 +471,7 @@ public record struct Box4 {
 		H -= top + bottom;
 	}
 
+	public readonly Box4 Deflated(Margin4 margin) => Deflated(margin.Top, margin.Right, margin.Bottom, margin.Left);
 	public readonly Box4 Deflated(float all) => Deflated(all, all, all, all);
 	public readonly Box4 Deflated(float vertical, float horizontal) => Deflated(vertical, horizontal, vertical, horizontal);
 	public readonly Box4 Deflated(float top, float horizontal, float bottom) => Deflated(top, horizontal, bottom, horizontal);
