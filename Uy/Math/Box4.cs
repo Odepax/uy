@@ -532,12 +532,6 @@ public record struct Box4 {
 		Bottom = Bottom.CoerceIn(max.Top, max.Bottom, ArgumentValidation.Lenient),
 	};
 
-	// TODO: Box4.CoerceIn()
-	/*
-	public void CoerceIn(Box4 min, Box4 max, ArgumentValidation argumentValidation = default) {}
-	public readonly Box4 CoercedIn(Box4 min, Box4 max, ArgumentValidation argumentValidation = default) => default;
-	*/
-
 	/**
 	<summary>
 		<para>
