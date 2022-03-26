@@ -125,7 +125,22 @@ public record struct Margin4 {
 	public float Bottom { readonly get; set; }
 	public float Left { readonly get; set; }
 
+	/**
+	<summary>
+		<para>
+			Returns the sum of the <see cref="Left"/> and <see cref="Right"/> margins.
+		</para>
+	</summary>
+	**/
 	public readonly float Horizontal => Left + Right;
+
+	/**
+	<summary>
+		<para>
+			Returns the sum of the <see cref="Top"/> and <see cref="Bottom"/> margins.
+		</para>
+	</summary>
+	**/
 	public readonly float Vertical => Top + Bottom;
 
 	#endregion
