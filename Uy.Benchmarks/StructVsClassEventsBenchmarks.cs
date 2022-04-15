@@ -17,11 +17,19 @@ namespace Uy.Benchmarks;
 // }
 // => Looks like a case for a benchmark!
 
+/*
+
+MouseDownEvent: 10ns
+MouseDownEvent_singleton: 5ns
+ValueMouseDownEvent: 17ns
+ValueMouseDownEvent_in: 15ns
+
+*/
 
 class UserInputEvent {
 	public bool ContinueProcessing { get; private set; } = true;
 
-	protected UserInputEvent() {}
+	protected UserInputEvent() { }
 
 	public void StopProcessing() => ContinueProcessing = false;
 }
@@ -54,7 +62,6 @@ class MouseEvent : UserInputEvent {
 
 class MouseDownEvent : MouseEvent {
 	public readonly ConsoleKey Button;
-
 	public readonly bool IsDoubleClick;
 
 	public MouseDownEvent(Vector2 position, ConsoleKey button, bool isDoubleClick) : base(position) {
@@ -63,7 +70,59 @@ class MouseDownEvent : MouseEvent {
 	}
 }
 
-public readonly ref struct ValueMouseDownEvent {
+class SingletonUserInputEvent {
+	public bool ContinueProcessing { get; internal set; } = true;
+
+	protected SingletonUserInputEvent() { }
+
+	public void StopProcessing() => ContinueProcessing = false;
+}
+
+class SingletonMouseEvent : SingletonUserInputEvent {
+	public Vector2 Position { get; internal set; }
+
+	protected SingletonMouseEvent() {}
+
+	public PScope PositionScope(Vector2 scopedPosition) {
+		var savedPosition = Position;
+
+		Position = scopedPosition;
+
+		return new PScope(this, savedPosition);
+	}
+
+	public readonly struct PScope : IDisposable {
+		readonly SingletonMouseEvent Event;
+		readonly Vector2 SavedPosition;
+
+		public PScope(SingletonMouseEvent @event, Vector2 savedPosition) {
+			Event = @event;
+			SavedPosition = savedPosition;
+		}
+
+		public void Dispose() => Event.Position = SavedPosition;
+	}
+}
+
+class SingletonMouseDownEvent : SingletonMouseEvent {
+	public ConsoleKey Button { get; internal set; }
+	public bool IsDoubleClick { get; internal set; }
+}
+
+// A ref struct to wrap the singleton, preventing from keeping a reference to the event object.
+readonly ref struct MouseDownEventWrapper {
+	readonly SingletonMouseDownEvent Event;
+	internal MouseDownEventWrapper(SingletonMouseDownEvent @event) => Event = @event;
+
+	public bool ContinueProcessing => Event.ContinueProcessing;
+	public Vector2 Position => Event.Position;
+	public ConsoleKey Button => Event.Button;
+	public bool IsDoubleClick => Event.IsDoubleClick;
+	public void StopProcessing() => Event.StopProcessing();
+	public SingletonMouseEvent.PScope PositionScope(Vector2 scopedPosition) => Event.PositionScope(scopedPosition);
+}
+
+readonly ref struct ValueMouseDownEvent {
 	public bool ContinueProcessing { get; init; } = true;
 
 	public Vector2 Position { get; init; }
@@ -84,6 +143,14 @@ class SampleCompositeControl {
 	public SampleCompositeControl(Vector2 position) => Position = position;
 
 	public void OnMouseDown(MouseDownEvent @event) {
+		foreach (var child in Children)
+			using (@event.PositionScope(@event.Position - child.Position))
+				child.OnMouseDown(@event);
+
+		@event.StopProcessing();
+	}
+
+	public void OnMouseDown(MouseDownEventWrapper @event) {
 		foreach (var child in Children)
 			using (@event.PositionScope(@event.Position - child.Position))
 				child.OnMouseDown(@event);
@@ -130,8 +197,7 @@ public class StructVsClassEventsBenchmarks {
 	}
 
 	[Benchmark]
-	public bool MouseDownEvent()
-	{
+	public bool MouseDownEvent() {
 		var @event = new MouseDownEvent(new Vector2(42, 42), ConsoleKey.Enter, false);
 
 		RootControl.OnMouseDown(@event);
@@ -139,9 +205,24 @@ public class StructVsClassEventsBenchmarks {
 		return @event.ContinueProcessing;
 	}
 
+	static readonly SingletonMouseDownEvent Event = new();
+
 	[Benchmark]
-	public bool ValueMouseDownEvent()
-	{
+	public bool MouseDownEvent_singleton() {
+		Event.ContinueProcessing = true;
+		Event.Position = new Vector2(42, 42);
+		Event.Button = ConsoleKey.Enter;
+		Event.IsDoubleClick = false;
+
+		var @event = new MouseDownEventWrapper(Event);
+
+		RootControl.OnMouseDown(@event);
+
+		return Event.ContinueProcessing;
+	}
+
+	[Benchmark]
+	public bool ValueMouseDownEvent() {
 		var @event = new ValueMouseDownEvent(new Vector2(42, 42), ConsoleKey.Enter, false);
 
 		@event = RootControl.OnMouseDown(@event);
@@ -150,8 +231,7 @@ public class StructVsClassEventsBenchmarks {
 	}
 
 	[Benchmark]
-	public bool ValueMouseDownEvent_in()
-	{
+	public bool ValueMouseDownEvent_in() {
 		var @event = new ValueMouseDownEvent(new Vector2(42, 42), ConsoleKey.Enter, false);
 
 		@event = RootControl.OnMouseDown(in @event);
