@@ -8,7 +8,7 @@ Installation
 
 Install [Uy](https://www.nuget.org/packages/Uy/) from NuGet.
 
-Overview
+Usage
 ----
 
 This is a work in progress, which one shall avoid using in production, if not at all.
