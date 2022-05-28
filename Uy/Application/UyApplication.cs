@@ -2,28 +2,20 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using SharpGen.Runtime;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Reactive.Disposables;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Vortice.Direct3D;
-using Vortice.Direct3D11;
-using Vortice.DXGI;
-using Vortice.Mathematics;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.WindowsAndMessaging;
 using static Windows.Win32.PInvoke;
+using static Windows.Win32.UI.HiDpi.PROCESS_DPI_AWARENESS;
 using static Windows.Win32.UI.WindowsAndMessaging.PEEK_MESSAGE_REMOVE_TYPE;
 using static Windows.Win32.UI.WindowsAndMessaging.SHOW_WINDOW_CMD;
-using static Windows.Win32.UI.WindowsAndMessaging.SYSTEM_METRICS_INDEX;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_EX_STYLE;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_STYLE;
 using static Windows.Win32.UI.WindowsAndMessaging.WNDCLASS_STYLES;
@@ -38,33 +30,28 @@ namespace Uy;
 </summary>
 **/
 class UyApplication<TMainWindowContent> : BackgroundService where TMainWindowContent : IWindowRootContent {
-	readonly ILogger<UyApplication<TMainWindowContent>> Logger;
 	readonly IHostApplicationLifetime ApplicationLifetime;
 	readonly IServiceProvider ServiceProvider;
 
-	public UyApplication(ILogger<UyApplication<TMainWindowContent>> logger, IHostApplicationLifetime applicationLifetime, IServiceProvider serviceProvider) {
-		Logger = logger;
+	public UyApplication(IHostApplicationLifetime applicationLifetime, IServiceProvider serviceProvider) {
 		ApplicationLifetime = applicationLifetime;
 		ServiceProvider = serviceProvider;
 	}
 
-	protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-		using var application = new Win32Application(ServiceProvider);
+	protected override Task ExecuteAsync(CancellationToken stoppingToken) {
+		// Starting a long-running task in order to not block the current thread-pool thread.
+		return Task.Factory.StartNew(() => {
+			using var application = new Win32Application(ServiceProvider);
 
-		application.OpenWindow(typeof(TMainWindowContent));
-		application.RunGameLoop(stoppingToken);
+			application.OpenWindow(typeof(TMainWindowContent));
+			application.RunGameLoop(stoppingToken);
 
-		//Logger.LogDebug("This application will close in 2 seconds...");
-
-		//await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-
-		//ApplicationLifetime.StopApplication();
-
-		//InitializeWin32WindowClass();
-		//InitializeWin32Window();
-		//ShowWin32Window();
-		//InitializeDirectX();
-		//RunGameLoop();
+			// If we got there, but not because the host application is shutting down,
+			// it means the game loop stopped with WM_QUIT,
+			// which is a signal to close the host application.
+			if (stoppingToken.IsCancellationRequested.Nt())
+				ApplicationLifetime.StopApplication();
+		}, TaskCreationOptions.LongRunning);
 	}
 }
 
@@ -90,6 +77,8 @@ class Win32Application : IDisposable {
 	readonly ConcurrentDictionary<HWND, Win32Window> Windows = new();
 	readonly ILogger<Win32Application> Logger;
 
+	int MainWindowCount;
+
 	/**
 	<summary>
 		<para>
@@ -102,6 +91,7 @@ class Win32Application : IDisposable {
 		InstanceHandle = GetModuleHandle(null as string) ?? throw new Bug("6ADC2291-23FF-4829-82BE-666FBAD0961F"); // NULL => Unable to get the Win32 instance handle.
 		Logger = ServiceProvider.GetRequiredService<ILogger<Win32Application>>();
 
+		InitializeDpiAwareness();
 		RegisterWin32WindowClass();
 	}
 
@@ -116,6 +106,13 @@ class Win32Application : IDisposable {
 		Windows
 			.DisposeAll(kvp => kvp.Value)
 			.Clear();
+
+		UnregisterWin32WindowClass();
+
+		InstanceHandle.Close();
+		InstanceHandle.Dispose();
+
+		_ = ServiceProvider; // Not the application's job to dispose of the service provider.
 	}
 
 	public void OpenWindow(Type windowRootContentType) {
@@ -123,13 +120,32 @@ class Win32Application : IDisposable {
 
 		if (Windows.TryAdd(window.WindowHandle, window).Nt())
 			throw new Bug("2FDB1820-D621-4DF8-995A-5368DFF02774");
+
+		if (window.IsMainWindow)
+			Interlocked.Increment(ref MainWindowCount);
+	}
+	
+	public void CloseWindow(Win32Window window) {
+		// From https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-destroywindow:
+		//
+		// > Destroys the specified window. The function sends WM_DESTROY and WM_NCDESTROY messages
+		// > to the window to deactivate it and remove the keyboard focus from it.
+		// > The function also destroys the window's menu, flushes the thread message queue,
+		// > destroys timers, removes clipboard ownership, and breaks the clipboard viewer chain
+		// > if the window is at the top of the viewer chain.
+		//
+		// > A thread cannot use DestroyWindow to destroy a window created by a different thread!
+		DestroyWindow(window.WindowHandle);
 	}
 
-	// FROM VORTICE
 	public void RunGameLoop(CancellationToken stoppingToken) {
 		Logger.LogDebug("Entering game loop.");
 
+		var lastTimestamp = 0L;
+		var clockStopwatch = Stopwatch.StartNew();
+
 		while (stoppingToken.IsCancellationRequested.Nt()) {
+			// OS messages.
 			MSG msg;
 
 			while (PeekMessage(out msg, default, 0, 0, PM_REMOVE)) {
@@ -147,88 +163,49 @@ class Win32Application : IDisposable {
 				// in the nested "while (PeekMessage)" loop.
 				//
 				// Well, I may be cursed, but I still get messages after WM_QUIT.
-				// After thorough audit, I'm sorry to announce that my ass isn't chicken, though...
+				// After thorough audit, I'm sorry to announce that my ass is still not chicken...
 				if (msg.message == WM_QUIT || stoppingToken.IsCancellationRequested)
 					break;
 			}
 
 			if (msg.message == WM_QUIT || stoppingToken.IsCancellationRequested)
 				break;
+
+			// Clock update.
+			var timestamp = clockStopwatch.ElapsedMilliseconds;
+			var secondsSinceLastTick = (timestamp - lastTimestamp) / 1_000f;
+			var secondsSinceFirstTick = (lastTimestamp = timestamp) / 1_000f;
+
+			_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
+
+			// Render.
 		}
+
+		clockStopwatch.Stop();
 
 		Logger.LogDebug("Exited game loop.");
 	}
 
-	// FROM PREVIOUS UY
-	//public unsafe void RunMessageLoop(CancellationToken stoppingToken) {
-	//	var lastTimestamp = 0L;
-	//	var clockStopwatch = Stopwatch.StartNew();
-
-	//	try {
-	//		User32.ShowWindow(WindowHandle, ShowWindowCommand.Show);
-	//		Content.OnAppear();
-
-	//		while (true) {
-	//			// OS Messages.
-	//			MSG msg;
-
-	//			while (User32.PeekMessage(out msg, IntPtr.Zero, 0, 0, PM_REMOVE)) {
-	//				User32.TranslateMessage(ref msg);
-	//				User32.DispatchMessage(ref msg);
-
-	//				// From https://gamedev.stackexchange.com/questions/59857/game-loop-on-windows:
-	//				//
-	//				// > PeekMessage will only ever return WM_QUIT once the message queue is empty,
-	//				// > therefore guaranteeing that the last message is in fact WM_QUIT.
-	//				//
-	//				// The author of the comment cites https://docs.microsoft.com/en-us/windows/win32/winmsg/about-messages-and-message-queues.
-	//				//
-	//				// This removes the need for a duplicate "if (message == WM_QUIT || stoppingToken) break"
-	//				// in the nested "while (PeekMessage)" loop.
-	//				//
-	//				// Well, I may be cursed, but I still get messages after WM_QUIT.
-	//				// After thorough audit, I'm sorry to announce that my ass isn't chicken, though...
-	//				if (msg.message == WindowsMessages.WM_QUIT || stoppingToken.IsCancellationRequested)
-	//					break;
-	//			}
-
-	//			if (msg.message == WindowsMessages.WM_QUIT || stoppingToken.IsCancellationRequested)
-	//				break;
-
-	//			// Clock/frame tick/update.
-	//			var timestamp = clockStopwatch.ElapsedMilliseconds;
-	//			var secondsSinceLastTick = (timestamp - lastTimestamp) / 1_000f;
-	//			var secondsSinceFirstTick = (lastTimestamp = timestamp) / 1_000f;
-
-	//			TopLog.Event(nameof(Content) + '-' + nameof(Content.OnClockUpdate), "Seconds since last tick: " + secondsSinceLastTick);
-
-	//			Content.OnClockUpdate(new(secondsSinceFirstTick, secondsSinceLastTick));
-
-	//			// Re-render.
-	//			RenderAsRequested();
-	//		}
-	//	}
-
-	//	catch (Exception e) {
-	//		TopLog.Event(e.GetType().Name + " in the game loop", e.Message);
-	//	}
-
-	//	finally {
-	//		// At this point, the main window got WM_CLOSE-ed, and our implementation
-	//		// of the window procedure sent WM_DESTROY in response.
-
-	//		if (State_output.Value != WindowState.Minimized)
-	//			Content.OnDisappear();
-	//		// TODO: There is no detach upon WM_DESTROY!
-
-	//		// TODO: Determine how we want to close windows.
-	//		//CloseWindow(WindowHandle);
-	//	}
-
-	//	clockStopwatch.Stop();
-	//}
-
 	#region Win32 stuff
+
+	void InitializeDpiAwareness() {
+		// Stolen from https://github.com/AvaloniaUI/Avalonia:
+		//
+		// > Ideally we'd set DPI awareness in the manifest,
+		// > but this doesn't work for netcoreapp2.0 apps,
+		// > as they are actually dlls run by a console loader.
+		// > Instead we have to do it in code,
+		// > but there are various ways to do this depending on the OS version.
+		Logger.LogDebug("Setting DPI awareness.");
+
+		var result = SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+
+		if (result == HRESULT.E_INVALIDARG)
+			throw new Bug("43D75995-3D96-451D-A223-919696EFA2B9"); // The value passed in is not valid.
+
+		else if (result == HRESULT.E_ACCESSDENIED)
+			Logger.LogWarning("The DPI awareness was already set, either by calling this API previously, or through the application manifest.");
+	}
 
 	/**
 	<remarks>
@@ -251,7 +228,7 @@ class Win32Application : IDisposable {
 				cbSize = (uint) Unsafe.SizeOf<WNDCLASSEXW>(),
 				hInstance = (HINSTANCE) InstanceHandle.DangerousGetHandle(),
 				lpszClassName = windowClassName,
-				lpfnWndProc = Win32WindowProcedure,
+				lpfnWndProc = ProcessOsMessage,
 
 				// From https://docs.microsoft.com/en-us/windows/win32/gdi/resized-windows:
 				//
@@ -267,7 +244,6 @@ class Win32Application : IDisposable {
 				hCursor = LoadCursor(default, IDC_ARROW),
 			};
 
-			// TODO: UnregisterClass() must be called manually (to be confirmed)!
 			var windowClassRegistrationAtom = RegisterClassEx(windowClass);
 
 			if (windowClassRegistrationAtom == 0) // Unable to register window class.
@@ -275,15 +251,89 @@ class Win32Application : IDisposable {
 		}
 	}
 
-	LRESULT Win32WindowProcedure(HWND hWnd, uint message, WPARAM wParam, LPARAM lParam) {
-		if (Windows.TryGetValue(hWnd, out var window))
-			return window.ProcessOsMessage(message, wParam, lParam);
+	void UnregisterWin32WindowClass() =>
+		UnregisterClass(Win32Window.Win32WindowClassName, InstanceHandle);
 
-		else {
-			Logger.LogWarning("No window {HWND} found to process message {MSG}!", hWnd.Value, message);
+	LRESULT ProcessOsMessage(HWND hWnd, uint message, WPARAM wParam, LPARAM lParam) {
+		switch (message) {
+			// From https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#window-destruction:
+			//
+			// - Clicking "close" sends WM_CLOSE.
+			// - Process the WM_CLOSE message to confirm with the user before calling DestroyWindow().
+			//   E.g at https://docs.microsoft.com/en-us/windows/win32/learnwin32/closing-the-window.
+			//
+			// From https://stackoverflow.com/a/3155879/16501294:
+			// 
+			// + WM_CLOSE is sent to the window when it is being closed, i.e.
+			//
+			//   - When its close button is clicked;
+			//   - When "Close" is chosen from the window's menu;
+			//   - When Alt-F4 is pressed while the window has focus.
+			//
+			//   If you catch this message, this is your decision how to treat it:
+			//   ignore it, or really close the window. By default, WM_CLOSE is passed
+			//   to DefWindowProc(), which causes the window to be destroyed.
+			//
+			// + WM_DESTROY is sent to the window when it starts to be destroyed.
+			//   In this stage, in opposition to WM_CLOSE, you cannot stop the process,
+			//   you can only make any necessary cleanup.
+			//
+			//   When you catch WM_DESTROY, none of its child windows have been destroyed yet.
+			//
+			// + WM_QUIT is not related to any window, i.e. the hwnd of the message is NULL
+			//   and no window procedure is called.
+			//
+			//   This message indicates that the message loop should be stopped,
+			//   and the application should exit.
+			//case WM_CLOSE: {
+			//	break;
+			//}
+			case WM_DESTROY: {
+				Logger.LogDebug(nameof(WM_DESTROY));
 
-			return DefWindowProc(hWnd, message, wParam, lParam);
+				if (Windows.TryRemove(hWnd, out var window))
+					window.Dispose();
+				
+				else throw new Bug("44018E69-84C4-453F-A930-8B8B2A643E20");
+
+				if (window.IsMainWindow && Interlocked.Decrement(ref MainWindowCount) == 0)
+					PostQuitMessage(0);
+
+				break;
+			}
+			//case WM_QUIT: {
+			//	break;
+			//}
+
+			//case WM_ACTIVATEAPP: {
+			//	//if (wParam != 0) Application.Current?.OnActivated();
+			//	//else Application.Current?.OnDeactivated();
+
+			//	break;
+			//}
+
+			// The message was NONE of the above.
+			default: {
+				// Some messages will be processed at the application-level,
+				// they will have an intentionally NULL hWnd parameter.
+				if (hWnd.Value == 0)
+					// Application-level messages should already have been processed by now...
+					return DefWindowProc(hWnd, message, wParam, lParam);
+
+				// Some messages will be addressed to specific windows.
+				else if (Windows.TryGetValue(hWnd, out var window))
+					return window.ProcessOsMessage(message, wParam, lParam);
+
+				else {
+					Logger.LogWarning("No window {HWND} found to process message {MSG}!", hWnd.Value, message);
+
+					return DefWindowProc(hWnd, message, wParam, lParam);
+				}
+			}
 		}
+
+		// The message WAS one of the above.
+		return new LRESULT(0);
 	}
 
 	#endregion
@@ -304,6 +354,8 @@ class Win32Application : IDisposable {
 </remarks>
 	**/
 class Win32Window : IDisposable {
+	public readonly bool IsMainWindow = true;
+
 	readonly Win32Application Application;
 	readonly IServiceScope ServiceScope;
 	readonly WindowBridge Bridge;
@@ -329,8 +381,7 @@ class Win32Window : IDisposable {
 		CreateWin32Window(out WindowHandle);
 		ShowWin32Window();
 
-		if (false)
-		throw new NotImplementedException("DI-get and install the IWindowRootContent. Get the System.type from a constructor parameter, no generic here.");
+		// TODO: DI-get and install the IWindowRootContent. Get the System.type from a constructor parameter, no generic here.");
 
 		Bridge.WindowOpened.Cancel();
 	}
@@ -345,115 +396,15 @@ class Win32Window : IDisposable {
 	public void Dispose() {
 		Bridge.WindowClosing.Cancel();
 
-		throw new NotImplementedException("Actually close and destroy the Win32 window.");
+		DestroyWin32Window();
 
 		Bridge.LinkedWindow = null;
 		Bridge.WindowClosed.Cancel();
 
+		_ = Application; // Not the window's job to dispose of the application.
 		ServiceScope.Dispose();
 		_ = Bridge; // Already disposed with the service scope.
 	}
-
-	internal LRESULT ProcessOsMessage(uint message, WPARAM wParam, LPARAM lParam) {
-		// FROM VORTICE
-
-		//switch (message) {
-		//	case WM_ACTIVATEAPP: {
-		//		//if (wParam != 0)
-		//		//	Current?.OnActivated();
-		//		//else
-		//		//	Current?.OnDeactivated();
-		//	} break;
-
-		//	case WM_KEYDOWN:
-		//	case WM_KEYUP:
-		//	case WM_SYSKEYDOWN:
-		//	case WM_SYSKEYUP:
-		//		//OnKey(message, wParam, lParam);
-		//		break;
-
-		//	case WM_DESTROY:
-		//		PostQuitMessage(0);
-		//		break;
-		//}
-
-		return DefWindowProc(WindowHandle, message, wParam, lParam);
-	}
-
-	// FROM PREVIOUS UY
-	//[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-	//static unsafe IntPtr WindowProc(IntPtr hWnd, WindowsMessages msg, nuint wparam, nint lparam) {
-	//	if (Windows.TryGetValue(hWnd, out var window)) {
-	//		/**/ if (msg == WindowsMessages.WM_SIZE) /*         */ window.On_WM_SIZE((WindowResizeReason) wparam, LOWORD(lparam), HIWORD(lparam));
-	//		else if (msg == WindowsMessages.WM_DPICHANGED) /*   */ window.On_WM_DPICHANGED(LOWORD(wparam));
-	//		else if (msg == WindowsMessages.WM_PAINT) /*        */ window.On_WM_PAINT();
-
-	//		else if (msg == WindowsMessages.WM_MOUSEMOVE) /*    */ window.On_WM_MOUSEMOVE(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
-	//		else if (msg == WindowsMessages.WM_MOUSEWHEEL) /*   */ window.On_WM_MOUSE_WHEEL(GET_WHEEL_DELTA_WPARAM(wparam), false);
-	//		else if (msg == WindowsMessages.WM_MOUSEHWHEEL) /*  */ window.On_WM_MOUSE_WHEEL(GET_WHEEL_DELTA_WPARAM(wparam), true);
-	//		else if (msg == WindowsMessages.WM_LBUTTONDOWN) /*  */ window.On_WM__BUTTONDOWN(Key.MouseLeft, false);
-	//		else if (msg == WindowsMessages.WM_LBUTTONDBLCLK) /**/ window.On_WM__BUTTONDOWN(Key.MouseLeft, true);
-	//		else if (msg == WindowsMessages.WM_LBUTTONUP) /*    */ window.On_WM__BUTTONUP__(Key.MouseLeft);
-	//		else if (msg == WindowsMessages.WM_RBUTTONDOWN) /*  */ window.On_WM__BUTTONDOWN(Key.MouseRight, false);
-	//		else if (msg == WindowsMessages.WM_RBUTTONDBLCLK) /**/ window.On_WM__BUTTONDOWN(Key.MouseRight, true);
-	//		else if (msg == WindowsMessages.WM_RBUTTONUP) /*    */ window.On_WM__BUTTONUP__(Key.MouseRight);
-	//		else if (msg == WindowsMessages.WM_MBUTTONDOWN) /*  */ window.On_WM__BUTTONDOWN(Key.MouseMiddle, false);
-	//		else if (msg == WindowsMessages.WM_MBUTTONDBLCLK) /**/ window.On_WM__BUTTONDOWN(Key.MouseMiddle, true);
-	//		else if (msg == WindowsMessages.WM_MBUTTONUP) /*    */ window.On_WM__BUTTONUP__(Key.MouseMiddle);
-	//		else if (msg == WindowsMessages.WM_XBUTTONDOWN) /*  */ window.On_WM__BUTTONDOWN(HIWORD(wparam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2, false);
-	//		else if (msg == WindowsMessages.WM_XBUTTONDBLCLK) /**/ window.On_WM__BUTTONDOWN(HIWORD(wparam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2, true);
-	//		else if (msg == WindowsMessages.WM_XBUTTONUP) /*    */ window.On_WM__BUTTONUP__(HIWORD(wparam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2);
-	//		else if (msg == WindowsMessages.WM_MOUSELEAVE) /*   */ window.On_WM_MOUSELEAVE();
-
-	//		else if (msg == WindowsMessages.WM_KEYDOWN) /*      */ window.On_WM_KEYDOWN(wparam, lparam);
-	//		else if (msg == WindowsMessages.WM_KEYUP) /*        */ window.On_WM_KEYUP(wparam, lparam);
-	//		else if (msg == WindowsMessages.WM_SYSKEYDOWN) {
-	//			// Sys' keys are sent to the default procedure if the events are not blocked.
-	//			if (window.On_WM_KEYDOWN(wparam, lparam))
-	//				return User32.DefWindowProc(hWnd, msg, wparam, lparam);
-	//		}
-	//		else if (msg == WindowsMessages.WM_SYSKEYUP) {
-	//			// Sys' keys are sent to the default procedure if the events are not blocked.
-	//			if (window.On_WM_KEYUP(wparam, lparam))
-	//				return User32.DefWindowProc(hWnd, msg, wparam, lparam);
-	//		}
-	//		else if (msg == WindowsMessages.WM_CHAR) /*         */ window.On_WM_CHAR((char) wparam, lparam);
-	//		else if (msg == WindowsMessages.WM_UNICHAR) /*      */ window.On_WM_CHAR(char.ConvertFromUtf32(unchecked((int) wparam)), lparam);
-
-	//		//else if (msg == WindowsMessages.WM_SETFOCUS) /*     */ window.On_WM_SETFOCUS();
-	//		//else if (msg == WindowsMessages.WM_KILLFOCUS) /*    */ window.On_WM_KILLFOCUS();
-
-	//		else if (msg == WindowsMessages.WM_DESTROY) {
-	//			TopLog.Event(nameof(WindowsMessages.WM_DESTROY));
-
-	//			User32.PostQuitMessage(0);
-	//		}
-
-	//		//else if (msg == WindowsMessages.WM_SYSCOMMAND) {
-	//		//	window.On_WM_SYSCOMMAND((SysCommands) wparam);
-
-	//		//	return User32.DefWindowProc(hWnd, msg, wparam, lparam);
-	//		//}
-
-	//		// The message is NONE of the above.
-	//		else return User32.DefWindowProc(hWnd, msg, wparam, lparam);
-
-	//		// The message IS one of the above.
-	//		return IntPtr.Zero;
-
-	//		// TODO: should we handle WM_DESTROY with PostQuitMessage(0) ?
-	//		// TODO: should we handle WM_CLOSE with PostQuitMessage(0) ?
-	//		//
-	//		// From https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#window-destruction:
-	//		//
-	//		// - Clicking "close" sends WM_CLOSE.
-	//		// - Process the WM_CLOSE message to confirm with the user before calling User32.DestroyWindow().
-	//		//   E.g at https://docs.microsoft.com/en-us/windows/win32/learnwin32/closing-the-window
-	//	}
-
-	//	// Initialization might not be complete yet.
-	//	else return User32.DefWindowProc(hWnd, msg, wparam, lparam);
-	//}
 
 	#region Win32 stuff
 
@@ -490,21 +441,75 @@ class Win32Window : IDisposable {
 		ShowWindow(WindowHandle, SW_SHOW);
 	}
 
-	/*
 	void DestroyWin32Window() {
 		Logger.LogDebug("Destroying Win32 window.");
 
-		// FROM VORTICE
-			HWND destroyHandle = WindowHandle;
-			WindowHandle = default;
-
-			Debug.WriteLine($"[WIN32] - Destroying window: {destroyHandle}");
-			DestroyWindow(destroyHandle);
-
-		// FROM PREVIOUS UY
-			// Nothing?!
+		// DestroyWindow() sends the WM_DESTROY message,
+		// which is the cause for this very method being called.
+		// Let's NOT create a call loop here...
 	}
-	*/
+
+	internal LRESULT ProcessOsMessage(uint message, WPARAM wParam, LPARAM lParam) {
+		switch (message) {
+			//case WM_SIZE: /*         */ On_WM_SIZE((WindowResizeReason) wParam, LOWORD(lParam), HIWORD(lParam)); break;
+			//case WM_DPICHANGED: /*   */ On_WM_DPICHANGED(LOWORD(wParam)); break;
+			//case WM_PAINT: /*        */ On_WM_PAINT(); break;
+
+			//case WM_MOUSEMOVE: /*    */ On_WM_MOUSEMOVE(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)); break;
+			//case WM_MOUSELEAVE: /*   */ On_WM_MOUSELEAVE(); break;
+
+			//case WM_MOUSEWHEEL: /*   */ On_WM_MOUSE_WHEEL(GET_WHEEL_DELTA_WPARAM(wParam), false); break;
+			//case WM_MOUSEHWHEEL: /*  */ On_WM_MOUSE_WHEEL(GET_WHEEL_DELTA_WPARAM(wParam), true); break;
+
+			//case WM_LBUTTONDOWN: /*  */ On_WM__BUTTONDOWN(Key.MouseLeft, false); break;
+			//case WM_LBUTTONDBLCLK: /**/ On_WM__BUTTONDOWN(Key.MouseLeft, true); break;
+			//case WM_LBUTTONUP: /*    */ On_WM__BUTTONUP__(Key.MouseLeft); break;
+			//case WM_RBUTTONDOWN: /*  */ On_WM__BUTTONDOWN(Key.MouseRight, false); break;
+			//case WM_RBUTTONDBLCLK: /**/ On_WM__BUTTONDOWN(Key.MouseRight, true); break;
+			//case WM_RBUTTONUP: /*    */ On_WM__BUTTONUP__(Key.MouseRight); break;
+			//case WM_MBUTTONDOWN: /*  */ On_WM__BUTTONDOWN(Key.MouseMiddle, false); break;
+			//case WM_MBUTTONDBLCLK: /**/ On_WM__BUTTONDOWN(Key.MouseMiddle, true); break;
+			//case WM_MBUTTONUP: /*    */ On_WM__BUTTONUP__(Key.MouseMiddle); break;
+			//case WM_XBUTTONDOWN: /*  */ On_WM__BUTTONDOWN(HIWORD(wParam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2, false); break;
+			//case WM_XBUTTONDBLCLK: /**/ On_WM__BUTTONDOWN(HIWORD(wParam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2, true); break;
+			//case WM_XBUTTONUP: /*    */ On_WM__BUTTONUP__(HIWORD(wParam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2); break;
+
+			//case WM_KEYDOWN: /*      */ On_WM_KEYDOWN(wParam, lParam); break;
+			//case WM_KEYUP: /*        */ On_WM_KEYUP(wParam, lParam); break;
+			//case WM_SYSKEYDOWN: {
+			//	// System keys are sent to the default procedure if the events are not blocked.
+			//	if (On_WM_KEYDOWN(wParam, lParam))
+			//		return DefWindowProc(WindowHandle, message, wParam, lParam);
+
+			//	break;
+			//}
+			//case WM_SYSKEYUP: {
+			//	// System keys are sent to the default procedure if the events are not blocked.
+			//	if (On_WM_KEYUP(wParam, lParam))
+			//		return DefWindowProc(WindowHandle, message, wParam, lParam);
+
+			//	break;
+			//}
+
+			//case WM_CHAR: /*         */ On_WM_CHAR((char) wParam, lParam);
+			//case WM_UNICHAR: /*      */ On_WM_CHAR(char.ConvertFromUtf32(unchecked((int) wParam)), lParam);
+
+			//case WM_SETFOCUS: /*     */ On_WM_SETFOCUS();
+			//case WM_KILLFOCUS: /*    */ On_WM_KILLFOCUS();
+
+			//case WM_SYSCOMMAND: {
+			//	On_WM_SYSCOMMAND((SysCommands) wParam);
+
+			//	return DefWindowProc(WindowHandle, message, wParam, lParam);
+			//}
+
+			// The message was NONE of the above.
+			default: return DefWindowProc(WindowHandle, message, wParam, lParam);
+		}
+
+		// The message WAS one of the above.
+		return new LRESULT(0);
+	}
 
 	#endregion
 }
