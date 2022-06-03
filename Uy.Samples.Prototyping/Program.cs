@@ -2,6 +2,8 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Debug;
+using System;
+using System.Reactive.Linq;
 using Uy;
 
 Host
@@ -21,37 +23,10 @@ Host
 
 class MainWindowRootControl : IWindowRootContent {
 	public MainWindowRootControl(IWindowBridge currentWindow, ILogger<MainWindowRootControl> logger) {
-		currentWindow.Title = "Hello, title!";
+		currentWindow.Title = "Hello, there!";
 		currentWindow.State = WindowState.Maximized;
 		currentWindow.WindowClosing.Register(() => {
-			logger.LogDebug("No! No! I don't want to die!..");
+			logger.LogDebug("They came from.... Behind!");
 		});
 	}
 }
-
-
-//using Windows.ApplicationModel.Core;
-//using Windows.UI.Core;
-
-//class Program : IFrameworkViewSource, IFrameworkView {
-//	[System.MTAThread]
-//    static void Main() {
-//        CoreApplication.Run(new Program());
-//    }
-
-//    public IFrameworkView CreateView() => this;
-
-//    public void Initialize(CoreApplicationView applicationView) { }
-//    public void Load(string entryPoint) { }
-
-//    public void Run() {
-//        CoreWindow window = CoreWindow.GetForCurrentThread();
-//        window.Activate();
-
-//        CoreDispatcher dispatcher = window.Dispatcher;
-//        dispatcher.ProcessEvents(CoreProcessEventsOption.ProcessUntilQuit);
-//    }
-
-//    public void SetWindow(CoreWindow window) { }
-//    public void Uninitialize() { }
-//}

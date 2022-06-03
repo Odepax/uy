@@ -2,21 +2,26 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Reactive.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Threading.Tasks;
-using Windows.Win32;
+using System.Threading;
+using System;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.WindowsAndMessaging;
+using Windows.Win32;
+using static Windows.Win32.Graphics.Gdi.MONITOR_FROM_FLAGS;
 using static Windows.Win32.PInvoke;
 using static Windows.Win32.UI.HiDpi.PROCESS_DPI_AWARENESS;
 using static Windows.Win32.UI.WindowsAndMessaging.PEEK_MESSAGE_REMOVE_TYPE;
+using static Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS;
 using static Windows.Win32.UI.WindowsAndMessaging.SHOW_WINDOW_CMD;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_EX_STYLE;
+using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_LONG_PTR_INDEX;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_STYLE;
 using static Windows.Win32.UI.WindowsAndMessaging.WNDCLASS_STYLES;
 
@@ -116,15 +121,17 @@ class Win32Application : IDisposable {
 	}
 
 	public void OpenWindow(Type windowRootContentType) {
-		var window = new Win32Window(this, windowRootContentType);
+		_ = new Win32Window(this, windowRootContentType);
+	}
 
+	internal void RegisterWindow(Win32Window window) {
 		if (Windows.TryAdd(window.WindowHandle, window).Nt())
 			throw new Bug("2FDB1820-D621-4DF8-995A-5368DFF02774");
 
 		if (window.IsMainWindow)
 			Interlocked.Increment(ref MainWindowCount);
 	}
-	
+
 	public void CloseWindow(Win32Window window) {
 		// From https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-destroywindow:
 		//
@@ -228,7 +235,7 @@ class Win32Application : IDisposable {
 				cbSize = (uint) Unsafe.SizeOf<WNDCLASSEXW>(),
 				hInstance = (HINSTANCE) InstanceHandle.DangerousGetHandle(),
 				lpszClassName = windowClassName,
-				lpfnWndProc = ProcessOsMessage,
+				lpfnWndProc = ProcessWin32OsMessage,
 
 				// From https://docs.microsoft.com/en-us/windows/win32/gdi/resized-windows:
 				//
@@ -254,7 +261,7 @@ class Win32Application : IDisposable {
 	void UnregisterWin32WindowClass() =>
 		UnregisterClass(Win32Window.Win32WindowClassName, InstanceHandle);
 
-	LRESULT ProcessOsMessage(HWND hWnd, uint message, WPARAM wParam, LPARAM lParam) {
+	LRESULT ProcessWin32OsMessage(HWND hWnd, uint message, WPARAM wParam, LPARAM lParam) {
 		switch (message) {
 			// From https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#window-destruction:
 			//
@@ -263,7 +270,7 @@ class Win32Application : IDisposable {
 			//   E.g at https://docs.microsoft.com/en-us/windows/win32/learnwin32/closing-the-window.
 			//
 			// From https://stackoverflow.com/a/3155879/16501294:
-			// 
+			//
 			// + WM_CLOSE is sent to the window when it is being closed, i.e.
 			//
 			//   - When its close button is clicked;
@@ -289,11 +296,9 @@ class Win32Application : IDisposable {
 			//	break;
 			//}
 			case WM_DESTROY: {
-				Logger.LogDebug(nameof(WM_DESTROY));
-
 				if (Windows.TryRemove(hWnd, out var window))
 					window.Dispose();
-				
+
 				else throw new Bug("44018E69-84C4-453F-A930-8B8B2A643E20");
 
 				if (window.IsMainWindow && Interlocked.Decrement(ref MainWindowCount) == 0)
@@ -322,7 +327,7 @@ class Win32Application : IDisposable {
 
 				// Some messages will be addressed to specific windows.
 				else if (Windows.TryGetValue(hWnd, out var window))
-					return window.ProcessOsMessage(message, wParam, lParam);
+					return window.ProcessWin32OsMessage(message, wParam, lParam);
 
 				else {
 					Logger.LogWarning("No window {HWND} found to process message {MSG}!", hWnd.Value, message);
@@ -358,8 +363,12 @@ class Win32Window : IDisposable {
 
 	readonly Win32Application Application;
 	readonly IServiceScope ServiceScope;
-	readonly WindowBridge Bridge;
+	readonly Win32WindowBridge Bridge;
 	readonly ILogger<Win32Window> Logger;
+	readonly IWindowRootContent RootContent;
+
+	readonly IDisposable Title_subscription;
+	readonly IDisposable State_subscription;
 
 	/**
 	<summary>
@@ -371,19 +380,87 @@ class Win32Window : IDisposable {
 	public Win32Window(Win32Application application, Type windowRootContentType) {
 		Application = application;
 		ServiceScope = Application.ServiceProvider.CreateScope();
-		Bridge = ServiceScope.ServiceProvider.GetRequiredService<IWindowBridge>().As<WindowBridge>();
+		Bridge = ServiceScope.ServiceProvider.GetRequiredService<IWindowBridge>().As<Win32WindowBridge>();
 		Logger = ServiceScope.ServiceProvider.GetRequiredService<ILogger<Win32Window>>();
 
 		// First thing first: before we forget about it,
 		// we're going to register this Win32 window with the scoped window bridge!
-		Bridge.LinkedWindow = this;
+		InitializeWindowBridge(out Title_subscription, out State_subscription);
 
+		// Second thing is to create the Win32 window, of course.
 		CreateWin32Window(out WindowHandle);
+
+		// We need to get back to the application and register the window,
+		// otherwise, we'll miss important OS messages at the time we show the window,
+		// as the application will not be able to to route the messages
+		// to a window it doesn't know about...
+		Application.RegisterWindow(this);
+
+		// Then, we show the window; at this point, the window is visible to the user.
 		ShowWin32Window();
 
-		// TODO: DI-get and install the IWindowRootContent. Get the System.type from a constructor parameter, no generic here.");
+		// And only then, we can call in the root content.
+		// It has to be initialized after the bridge and the window,
+		// as the root content could get injected with the IWindowBridge,
+		// so this one has to be ready!
+		RootContent = (IWindowRootContent) ServiceScope.ServiceProvider.GetRequiredService(windowRootContentType);
 
 		Bridge.WindowOpened.Cancel();
+	}
+
+	void InitializeWindowBridge(out IDisposable title_subscription, out IDisposable state_subscription) {
+		Bridge.LinkedWindow = this;
+
+		// - Developers can set the state programatically,
+		//   in which case we update the Win32 window.
+		//
+		// - Users can set the state by interacting with the window,
+		//   in which case the Win32 window will be updated by the system,
+		//   and we just need to reflect that in the bridge.
+		//
+		// In order for it to work well, we'll consider WM_SIZE's reason parameter
+		// to be the source of truth.
+		// User interactions will be reported directly by this message,
+		// in which case we just have to push to the Bridge.State_observable.
+		//
+		// Programatic state changes will be reported by a separate Bridge.State_observer.
+		// Changes will trigger calls to ShowWindow(), which will trigger WM_SIZE,
+		// which allows us to close the loop.
+		//
+		//                                                 ,----------------------.       ,--------------.
+		//                                      ,--------> | Bridge.State_subject | ----> | Bridge.State |
+		//                                     /    ,----> |  = Subject.Create()  |       `--------------'
+		//                                    /     \      `----------------------'
+		//                                   /       \
+		//                                  /         `------------------------------------------------.
+		//                                 /                                                            \
+		// ,-----------------------.      /     ,-------------------------.       ,--------------.       \
+		// | Bridge.State_observer | ----'----> | .DistinctUntilChanged() | ----> | ShowWindow() |        \
+		// `-----------------------'            `-------------------------'       `--------------'         \
+		//                                                                               *                  \
+		//       ,-----------------------------------------------------------------------'                   \
+		//      v                                                                                             \
+		// ,---------.       ,--------.       ,-------------------------.       ,-------------------------.    \
+		// | WM_SIZE | ----> | Reason | ----> | Bridge.State_observable | ----> | .DistinctUntilChanged() | ----`
+		// `---------'       `--------'       `-------------------------'       `-------------------------'
+		Bridge.StateSubject_observer
+			.StartWith(WindowState.Restored)
+			.DistinctUntilChanged()
+			.Buffer(2, 1)
+			.Subscribe(states => OnWindowState_programatic(states[0], states[1]))
+			.Tee(out state_subscription);
+
+		// - Developers can set the title,
+		//   in which case we need to update the Win32 window's title.
+		Bridge.TitleSubject
+			.Subscribe(title => SetWindowText(WindowHandle, title))
+			.Tee(out title_subscription);
+
+		// TODO: Wire up WindowBridge.Zoom (user can get and set) (dependent on graphics)
+
+		// TODO: Wire up WindowBridge.DpiScale (user can get only) (dependent on graphics)
+
+		// TODO: Wire up WindowBridge.Size (user can get only) (dependent on graphics)
 	}
 
 	/**
@@ -396,6 +473,9 @@ class Win32Window : IDisposable {
 	public void Dispose() {
 		Bridge.WindowClosing.Cancel();
 
+		State_subscription.Dispose();
+		Title_subscription.Dispose();
+
 		DestroyWin32Window();
 
 		Bridge.LinkedWindow = null;
@@ -406,12 +486,59 @@ class Win32Window : IDisposable {
 		_ = Bridge; // Already disposed with the service scope.
 	}
 
+	#region Bridge handlers
+
+	void OnWindowState_programatic(WindowState previousState, WindowState newState) {
+		Logger.LogDebug("Programatically setting window state to {S}.", newState switch {
+			WindowState.Minimized => "minimized",
+			WindowState.Restored => "Restored",
+			WindowState.Maximized => "MAXIMIZED",
+			WindowState.FullScreen => "[Full-Screen]",
+
+			_ => throw new Bug("A1057B36-71C8-4758-A0D1-FC1FA68CE634"),
+		});
+
+		if (newState == WindowState.FullScreen)
+			EnterWin32FullScreen();
+
+		else {
+			if (previousState == WindowState.FullScreen)
+				ExitWin32FullScreen();
+
+			ShowWindow(WindowHandle, (SHOW_WINDOW_CMD) newState);
+		}
+	}
+
+	#endregion
+	#region Win32 OS message handlers
+
+	void On_WM_SIZE(uint reason, ushort rawWidth, ushort rawHeight) {
+		var newState = reason switch {
+			SIZE_MAXIMIZED => WindowState.Maximized,
+			SIZE_MINIMIZED => WindowState.Minimized,
+			SIZE_RESTORED => TestWin32FullScreen()
+				? WindowState.FullScreen
+				: WindowState.Restored,
+
+			_ => throw new Bug("F14AD583-9C00-4C61-B6F9-B72E0553A17C"),
+		};
+
+		Bridge.StateSubject_observable.OnNext(newState);
+
+		Logger.LogDebug("Set window state to {S}.", newState);
+	}
+
+	#endregion
 	#region Win32 stuff
 
 	internal const string Win32WindowClassName = "UyWindow";
 	const int DefaultSize = unchecked((int) 0x80000000);
+	const WINDOW_STYLE DefaultStyle = WS_OVERLAPPEDWINDOW;
+	const WINDOW_STYLE FullScreenStyle = default;
 
 	internal readonly HWND WindowHandle;
+
+	WINDOWPLACEMENT PlacementBeforeGoingFullScreen;
 
 	unsafe void CreateWin32Window(out HWND windowHandle) {
 		Logger.LogDebug("Creating Win32 window.");
@@ -419,7 +546,7 @@ class Win32Window : IDisposable {
 		windowHandle = CreateWindowEx(
 			hInstance: Application.InstanceHandle,
 			lpClassName: Win32WindowClassName,
-			dwStyle: WS_OVERLAPPEDWINDOW | WS_CLIPSIBLINGS | WS_BORDER | WS_DLGFRAME | WS_GROUP | WS_TABSTOP | WS_SIZEBOX,
+			dwStyle: DefaultStyle,
 			dwExStyle: WS_EX_APPWINDOW,
 			lpWindowName: string.Empty,
 			X: DefaultSize,
@@ -438,7 +565,7 @@ class Win32Window : IDisposable {
 	void ShowWin32Window() {
 		Logger.LogDebug("Showing Win32 window.");
 
-		ShowWindow(WindowHandle, SW_SHOW);
+		ShowWindow(WindowHandle, SW_NORMAL);
 	}
 
 	void DestroyWin32Window() {
@@ -449,9 +576,9 @@ class Win32Window : IDisposable {
 		// Let's NOT create a call loop here...
 	}
 
-	internal LRESULT ProcessOsMessage(uint message, WPARAM wParam, LPARAM lParam) {
+	internal LRESULT ProcessWin32OsMessage(uint message, WPARAM wParam, LPARAM lParam) {
 		switch (message) {
-			//case WM_SIZE: /*         */ On_WM_SIZE((WindowResizeReason) wParam, LOWORD(lParam), HIWORD(lParam)); break;
+			case WM_SIZE: /*         */ On_WM_SIZE(wParam, LOWORD(lParam), HIWORD(lParam)); break;
 			//case WM_DPICHANGED: /*   */ On_WM_DPICHANGED(LOWORD(wParam)); break;
 			//case WM_PAINT: /*        */ On_WM_PAINT(); break;
 
@@ -509,6 +636,39 @@ class Win32Window : IDisposable {
 
 		// The message WAS one of the above.
 		return new LRESULT(0);
+	}
+
+	void EnterWin32FullScreen() {
+		var monitor = new MONITORINFO { cbSize = (uint) Unsafe.SizeOf<MONITORINFO>() };
+
+		if (!(
+			   GetWindowPlacement(WindowHandle, ref PlacementBeforeGoingFullScreen)
+			&& GetMonitorInfo(MonitorFromWindow(WindowHandle, MONITOR_DEFAULTTOPRIMARY), ref monitor)
+			&& SetWindowLong(WindowHandle, GWL_STYLE, (int) FullScreenStyle) != 0
+			&& SetWindowPos(WindowHandle, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top, monitor.rcMonitor.right - monitor.rcMonitor.left, monitor.rcMonitor.bottom - monitor.rcMonitor.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED)
+		))
+			Logger.LogWarning("Cannot enter full screen mode.");
+	}
+
+	bool TestWin32FullScreen() {
+		// From https://stackoverflow.com/a/55542400.
+		var monitor = new MONITORINFO { cbSize = (uint) Unsafe.SizeOf<MONITORINFO>() };
+
+		GetMonitorInfo(MonitorFromWindow(WindowHandle, MONITOR_DEFAULTTOPRIMARY), ref monitor);
+		GetWindowRect(WindowHandle, out var windowRect);
+
+		return windowRect.left == monitor.rcMonitor.left
+		    && windowRect.right == monitor.rcMonitor.right
+		    && windowRect.top == monitor.rcMonitor.top
+		    && windowRect.bottom == monitor.rcMonitor.bottom;
+	}
+
+	void ExitWin32FullScreen() {
+		if (!(
+			   SetWindowLong(WindowHandle, GWL_STYLE, (int) DefaultStyle) != 0
+			&& SetWindowPlacement(WindowHandle, PlacementBeforeGoingFullScreen)
+		))
+			Logger.LogWarning("Cannot exit full screen mode.");
 	}
 
 	#endregion
@@ -588,7 +748,7 @@ class Application : IDisposable {
 
 	}
 
-	
+
 }
 
 

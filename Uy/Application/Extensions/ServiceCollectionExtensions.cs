@@ -12,7 +12,7 @@ public static class ServiceCollectionExtensions {
 	**/
 	public static IServiceCollection AddUy<TMainWindowContent>(this IServiceCollection @this) where TMainWindowContent : class, IWindowRootContent {
 		@this.AddHostedService<UyApplication<TMainWindowContent>>();
-		@this.AddScoped<IWindowBridge, WindowBridge>();
+		@this.AddScoped<IWindowBridge, Win32WindowBridge>();
 
 		return @this;
 	}

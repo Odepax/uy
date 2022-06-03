@@ -121,7 +121,7 @@ public enum WindowState : uint {
 	<remarks>
 		<para>
 			Other applications are still running.
-			I hope you know what you're doing with this value...
+			The user can still <c>Alt-Tab</c> to and from a full-screen window.
 		</para>
 	</remarks>
 	**/

@@ -1,24 +1,27 @@
 ﻿using System;
 using System.Numerics;
+using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading;
 
 namespace Uy;
 
-class WindowBridge : IWindowBridge, IDisposable {
+class Win32WindowBridge : IWindowBridge, IDisposable {
 	ISubject<WindowState> IWindowBridge.StateSubject => StateSubject;
 	ISubject<string> IWindowBridge.TitleSubject => TitleSubject;
 	ISubject<float> IWindowBridge.ZoomSubject => ZoomSubject;
 	IObservable<float> IWindowBridge.DpiScaleObservable => DpiScaleSubject;
 	IObservable<Vector2> IWindowBridge.SizeObservable => SizeSubject;
 
-	public readonly BehaviorSubject<WindowState> StateSubject = new(WindowState.Restored);
+	public readonly ISubject<WindowState> StateSubject;
+	public readonly Subject<WindowState> StateSubject_observer;
+	public readonly BehaviorSubject<WindowState> StateSubject_observable;
 	public readonly BehaviorSubject<string> TitleSubject = new(string.Empty);
 	public readonly BehaviorSubject<float> ZoomSubject = new(1f);
 	public readonly BehaviorSubject<float> DpiScaleSubject = new(1f);
 	public readonly BehaviorSubject<Vector2> SizeSubject = new(Vector2.Zero);
 
-	public WindowState State { get => StateSubject.Value; set => StateSubject.OnNext(value); }
+	public WindowState State { get => StateSubject_observable.Value; set => StateSubject_observer.OnNext(value); }
 	public string Title { get => TitleSubject.Value; set => TitleSubject.OnNext(value); }
 	public float Zoom { get => ZoomSubject.Value; set => ZoomSubject.OnNext(value); }
 	public float DpiScale { get => DpiScaleSubject.Value; set => DpiScaleSubject.OnNext(value); }
@@ -51,8 +54,18 @@ class WindowBridge : IWindowBridge, IDisposable {
 	**/
 	public Win32Window? LinkedWindow { private get; set; }
 
+	public Win32WindowBridge() {
+		StateSubject_observer = new();
+		StateSubject_observable = new(WindowState.Restored);
+		StateSubject = Subject.Create<WindowState>(
+			StateSubject_observer,
+			StateSubject_observable.DistinctUntilChanged()
+		);
+	}
+
 	public void Dispose() {
-		StateSubject.Dispose();
+		StateSubject_observer.Dispose();
+		StateSubject_observable.Dispose();
 		TitleSubject.Dispose();
 		ZoomSubject.Dispose();
 		DpiScaleSubject.Dispose();
