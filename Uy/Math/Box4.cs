@@ -421,7 +421,7 @@ public record struct Box4 {
 	/**
 	<summary>
 		<para>
-			Offset by polar coordinates.
+			Offsets by polar coordinates.
 		</para>
 	</summary>
 	**/

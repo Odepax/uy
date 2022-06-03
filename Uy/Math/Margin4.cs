@@ -91,7 +91,7 @@ public record struct Margin4 {
 		Bottom = bottom;
 		Left = left;
 	}
-	
+
 	public static implicit operator Margin4(float value) => new(value);
 	public static implicit operator Margin4((float Vertical, float Horizontal) tuple) => new(tuple.Vertical, tuple.Horizontal);
 	public static implicit operator Margin4((float Top, float Horizontal, float Bottom) tuple) => new(tuple.Top, tuple.Horizontal, tuple.Bottom);
@@ -176,7 +176,7 @@ public record struct Margin4 {
 
 	public static Margin4 operator -(Margin4 margin) =>
 		new(-margin.Top, -margin.Right, -margin.Bottom, -margin.Left);
-	
+
 	public static Margin4 operator +(Margin4 margin, Margin4 other) =>
 		new(margin.Top + other.Top, margin.Right + other.Right, margin.Bottom + other.Bottom, margin.Left + other.Left);
 
