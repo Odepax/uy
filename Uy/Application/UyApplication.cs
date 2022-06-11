@@ -2,18 +2,25 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Numerics;
 using System.Reactive.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using System.Threading;
-using System;
+using System.Threading.Tasks;
+using Vortice.Direct2D1;
+using Vortice.Direct3D;
+using Vortice.Direct3D11;
+using Vortice.DXGI;
+using Vortice.Mathematics;
+using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.WindowsAndMessaging;
-using Windows.Win32;
 using static Windows.Win32.Graphics.Gdi.MONITOR_FROM_FLAGS;
 using static Windows.Win32.PInvoke;
 using static Windows.Win32.UI.HiDpi.PROCESS_DPI_AWARENESS;
@@ -24,6 +31,7 @@ using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_EX_STYLE;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_LONG_PTR_INDEX;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_STYLE;
 using static Windows.Win32.UI.WindowsAndMessaging.WNDCLASS_STYLES;
+using D3FeatureLevel = Vortice.Direct3D.FeatureLevel;
 
 namespace Uy;
 
@@ -71,13 +79,14 @@ class UyApplication<TMainWindowContent> : BackgroundService where TMainWindowCon
 <remarks>
 	<para>
 		This class is <b>not to be registered with the dependecy injection container.</b>
-		This is a wrapper!
+		This is a DI wrapper!
 	</para>
 </remarks>
 **/
 class Win32Application : IDisposable {
 	internal readonly IServiceProvider ServiceProvider;
 	internal readonly FreeLibrarySafeHandle InstanceHandle;
+	internal readonly DeviceIndependentResourceDictionary Resources;
 
 	readonly ConcurrentDictionary<HWND, Win32Window> Windows = new();
 	readonly ILogger<Win32Application> Logger;
@@ -87,7 +96,7 @@ class Win32Application : IDisposable {
 	/**
 	<summary>
 		<para>
-			 Initializes a Win32 application.
+			Initializes a Win32 application.
 		</para>
 	</summary>
 	**/
@@ -98,6 +107,7 @@ class Win32Application : IDisposable {
 
 		InitializeDpiAwareness();
 		RegisterWin32WindowClass();
+		InitializeDirectXDeviceIndependentResources(out Resources);
 	}
 
 	/**
@@ -112,6 +122,7 @@ class Win32Application : IDisposable {
 			.DisposeAll(kvp => kvp.Value)
 			.Clear();
 
+		DisposeDirectXDeviceIndependentResources();
 		UnregisterWin32WindowClass();
 
 		InstanceHandle.Close();
@@ -186,6 +197,8 @@ class Win32Application : IDisposable {
 			_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
 
 			// Render.
+			foreach (var window in Windows.Values)
+				window.RunRenderPass();
 		}
 
 		clockStopwatch.Stop();
@@ -193,7 +206,29 @@ class Win32Application : IDisposable {
 		Logger.LogDebug("Exited game loop.");
 	}
 
+	#region DirectX stuff
+
+	void InitializeDirectXDeviceIndependentResources(out DeviceIndependentResourceDictionary resources) {
+		Logger.LogDebug("Initializing DirectX device-independent resources.");
+
+		resources = ServiceProvider.GetRequiredService<IDeviceIndependentResourceDictionary>().As<DeviceIndependentResourceDictionary>();
+	}
+
+	void DisposeDirectXDeviceIndependentResources() {
+		Logger.LogDebug("Disposing of DirectX device-independent resources.");
+
+		Resources.Dispose();
+	}
+
+	#endregion
 	#region Win32 stuff
+
+	// https://stackoverflow.com/a/64419394/16501294
+	//
+	// > The WndProc delegate passed to unmanaged code was being freed by the GC.
+	// > The simple fix was to keep a reference
+	// > to the WndProc delegate passed into the window class.
+	WNDPROC? Win32WindProcAntiGcReference;
 
 	void InitializeDpiAwareness() {
 		// Stolen from https://github.com/AvaloniaUI/Avalonia:
@@ -235,7 +270,7 @@ class Win32Application : IDisposable {
 				cbSize = (uint) Unsafe.SizeOf<WNDCLASSEXW>(),
 				hInstance = (HINSTANCE) InstanceHandle.DangerousGetHandle(),
 				lpszClassName = windowClassName,
-				lpfnWndProc = ProcessWin32OsMessage,
+				lpfnWndProc = Win32WindProcAntiGcReference = ProcessWin32OsMessage,
 
 				// From https://docs.microsoft.com/en-us/windows/win32/gdi/resized-windows:
 				//
@@ -258,8 +293,13 @@ class Win32Application : IDisposable {
 		}
 	}
 
-	void UnregisterWin32WindowClass() =>
+	void UnregisterWin32WindowClass() {
+		Logger.LogDebug("Unregistering Win32 window class.");
+
 		UnregisterClass(Win32Window.Win32WindowClassName, InstanceHandle);
+
+		Win32WindProcAntiGcReference = null;
+	}
 
 	LRESULT ProcessWin32OsMessage(HWND hWnd, uint message, WPARAM wParam, LPARAM lParam) {
 		switch (message) {
@@ -292,10 +332,14 @@ class Win32Application : IDisposable {
 			//
 			//   This message indicates that the message loop should be stopped,
 			//   and the application should exit.
-			//case WM_CLOSE: {
-			//	break;
-			//}
+			case WM_CLOSE: {
+				Logger.LogDebug("WM_CLOSE for {W}.", hWnd);
+
+				return DefWindowProc(hWnd, message, wParam, lParam);
+			}
 			case WM_DESTROY: {
+				Logger.LogDebug("WM_DESTROY for {W}.", hWnd);
+
 				if (Windows.TryRemove(hWnd, out var window))
 					window.Dispose();
 
@@ -306,11 +350,15 @@ class Win32Application : IDisposable {
 
 				break;
 			}
-			//case WM_QUIT: {
-			//	break;
-			//}
+			case WM_QUIT: {
+				Logger.LogDebug("WM_QUIT for {W}.", hWnd);
+
+				return DefWindowProc(hWnd, message, wParam, lParam);
+			}
 
 			//case WM_ACTIVATEAPP: {
+			//	Logger.LogDebug("WM_ACTIVATEAPP for {W}.", hWnd);
+
 			//	//if (wParam != 0) Application.Current?.OnActivated();
 			//	//else Application.Current?.OnDeactivated();
 
@@ -330,7 +378,7 @@ class Win32Application : IDisposable {
 					return window.ProcessWin32OsMessage(message, wParam, lParam);
 
 				else {
-					Logger.LogWarning("No window {HWND} found to process message {MSG}!", hWnd.Value, message);
+					Logger.LogWarning("No window {HWND} found to process Win32 message {MSG}!", hWnd.Value, message);
 
 					return DefWindowProc(hWnd, message, wParam, lParam);
 				}
@@ -354,7 +402,7 @@ class Win32Application : IDisposable {
 <remarks>
 	<para>
 		This class is <b>not to be registered with the dependecy injection container.</b>
-		This is a wrapper!
+		This is a DI wrapper!
 	</para>
 </remarks>
 	**/
@@ -365,10 +413,15 @@ class Win32Window : IDisposable {
 	readonly IServiceScope ServiceScope;
 	readonly Win32WindowBridge Bridge;
 	readonly ILogger<Win32Window> Logger;
+	readonly DeviceDependentResourceDictionary DeviceResources = new();
+	readonly IEnumerable<IDeviceDependentResourceInitializer> DeviceResourceInitializers;
 	readonly IWindowRootContent RootContent;
 
 	readonly IDisposable Title_subscription;
 	readonly IDisposable State_subscription;
+	readonly IDisposable Size_subscription;
+
+	bool RenderIsStale = true;
 
 	/**
 	<summary>
@@ -385,7 +438,7 @@ class Win32Window : IDisposable {
 
 		// First thing first: before we forget about it,
 		// we're going to register this Win32 window with the scoped window bridge!
-		InitializeWindowBridge(out Title_subscription, out State_subscription);
+		InitializeWindowBridge(out Title_subscription, out State_subscription, out Size_subscription);
 
 		// Second thing is to create the Win32 window, of course.
 		CreateWin32Window(out WindowHandle);
@@ -399,6 +452,8 @@ class Win32Window : IDisposable {
 		// Then, we show the window; at this point, the window is visible to the user.
 		ShowWin32Window();
 
+		DeviceResourceInitializers = ServiceScope.ServiceProvider.GetServices<IDeviceDependentResourceInitializer>();
+
 		// And only then, we can call in the root content.
 		// It has to be initialized after the bridge and the window,
 		// as the root content could get injected with the IWindowBridge,
@@ -408,7 +463,9 @@ class Win32Window : IDisposable {
 		Bridge.WindowOpened.Cancel();
 	}
 
-	void InitializeWindowBridge(out IDisposable title_subscription, out IDisposable state_subscription) {
+	void InitializeWindowBridge(out IDisposable title_subscription, out IDisposable state_subscription, out IDisposable size_subscription) {
+		Logger.LogDebug("Initializing window bridge.");
+
 		Bridge.LinkedWindow = this;
 
 		// - Developers can set the state programatically,
@@ -418,8 +475,8 @@ class Win32Window : IDisposable {
 		//   in which case the Win32 window will be updated by the system,
 		//   and we just need to reflect that in the bridge.
 		//
-		// In order for it to work well, we'll consider WM_SIZE's reason parameter
-		// to be the source of truth.
+		// In order for it to work well,
+		// we'll consider WM_SIZE's reason parameter to be the source of truth.
 		// User interactions will be reported directly by this message,
 		// in which case we just have to push to the Bridge.State_observable.
 		//
@@ -447,7 +504,7 @@ class Win32Window : IDisposable {
 			.StartWith(WindowState.Restored)
 			.DistinctUntilChanged()
 			.Buffer(2, 1)
-			.Subscribe(states => OnWindowState_programatic(states[0], states[1]))
+			.Subscribe(states => OnBridgeState_programatic(states[0], states[1]))
 			.Tee(out state_subscription);
 
 		// - Developers can set the title,
@@ -456,11 +513,26 @@ class Win32Window : IDisposable {
 			.Subscribe(title => SetWindowText(WindowHandle, title))
 			.Tee(out title_subscription);
 
-		// TODO: Wire up WindowBridge.Zoom (user can get and set) (dependent on graphics)
-
-		// TODO: Wire up WindowBridge.DpiScale (user can get only) (dependent on graphics)
-
-		// TODO: Wire up WindowBridge.Size (user can get only) (dependent on graphics)
+		// - The OS can set the DPI.
+		// - Developers can set the zoom.
+		// - Users can set the size.
+		//
+		// In all those cases, we need to:
+		//
+		// - Recompute the DPI scale.
+		// - Recompute the scaled size.
+		// - Invalidate the current render.
+		Observable
+			.CombineLatest(
+				Bridge.DpiSubject,
+				Bridge.ZoomSubject,
+				Bridge.HardwareSizeSubject
+					.Do(ClearDirectXStateDependentResources),
+				(dpiScale, zoom, hardwareSize) => (dpiScale, zoom, hardwareSize)
+			)
+			.DistinctUntilChanged()
+			.Subscribe(OnBridgeSize)
+			.Tee(out size_subscription);
 	}
 
 	/**
@@ -473,8 +545,14 @@ class Win32Window : IDisposable {
 	public void Dispose() {
 		Bridge.WindowClosing.Cancel();
 
+		_ = RootContent; // Will be disposed along with the service scope.
+
 		State_subscription.Dispose();
 		Title_subscription.Dispose();
+		Size_subscription.Dispose();
+
+		ClearDirectXStateDependentResources();
+		DisposeDirectXDeviceDependentResources();
 
 		DestroyWin32Window();
 
@@ -486,9 +564,255 @@ class Win32Window : IDisposable {
 		_ = Bridge; // Already disposed with the service scope.
 	}
 
+	public void RequestRender() {
+		Logger.LogDebug("Requesting next window {W} render pass.", WindowHandle);
+
+		RenderIsStale = true;
+	}
+
+	public void RunRenderPass() {
+		if (RenderIsStale) {
+			Logger.LogDebug("Running window {W} render pass.", WindowHandle);
+
+			RenderIsStale = false;
+
+			var hardwareSize = Bridge.HardwareSize;
+
+			if (hardwareSize.X <= 0 || hardwareSize.Y <= 0)
+				return;
+
+			if (DirectXDeviceResourcesAreUninitialized)
+				InitializeDirectXDeviceDependentResources();
+
+			if (DirectXStateResourcesAreUninitialized)
+				InitializeDirectXStateDependentResources();
+
+			InvokeDirectXRender(hardwareSize);
+		}
+	}
+
+	#region DirectX stuff
+
+	bool DirectXDeviceResourcesAreUninitialized = true;
+	bool DirectXStateResourcesAreUninitialized = true;
+
+	/**
+	<summary>
+		<para>
+			Initializes DirectX resources that are dependent on the device.
+		</para>
+	</summary>
+	**/
+	void InitializeDirectXDeviceDependentResources() {
+		Logger.LogDebug("Initializing DirectX device-dependent resources.");
+
+		DirectXDeviceResourcesAreUninitialized = false;
+
+		// First, create the Direct3D device.
+		D3D11.D3D11CreateDevice(
+			IntPtr.Zero, // Specify nullptr to use the default adapter.
+			DriverType.Hardware,
+			DeviceCreationFlags.BgraSupport // This flag is required in order to enable compatibility with Direct2D.
+			#if DEBUG
+				| DeviceCreationFlags.Debug // If the project is in a debug build, enable debugging via SDK Layers with this flag.
+			#endif
+			,
+			new[] { // This array defines the ordering of feature levels that D3D should attempt to create.
+				D3FeatureLevel.Level_11_1,
+				D3FeatureLevel.Level_11_0,
+				D3FeatureLevel.Level_10_1,
+				D3FeatureLevel.Level_10_0,
+				D3FeatureLevel.Level_9_3,
+				D3FeatureLevel.Level_9_1,
+			},
+			out var d3Device,
+			out var d3DeviceContext
+		);
+
+		// Retrieve the Direct3D 11.1 interfaces.
+		DeviceResources.D3Device = d3Device.QueryInterface<ID3D11Device5>();
+		DeviceResources.D3DeviceContext = d3DeviceContext.QueryInterface<ID3D11DeviceContext4>();
+
+		d3Device.Dispose();
+		d3DeviceContext.Dispose();
+
+		using var dxgiDevice = DeviceResources.D3Device.QueryInterface<IDXGIDevice4>();
+
+		DeviceResources.D2Device = Application.Resources.D2Factory.CreateDevice(dxgiDevice);
+		DeviceResources.D2DeviceContext = DeviceResources.D2Device.CreateDeviceContext(DeviceContextOptions.None);
+
+		foreach (var initializer in DeviceResourceInitializers)
+			initializer.OnDeviceInit(Application.Resources, DeviceResources);
+
+		RootContent.OnDeviceInit(new DeviceInitInfo(Application.Resources, DeviceResources));
+	}
+
+	void DisposeDirectXDeviceDependentResources() {
+		Logger.LogDebug("Disposing of DirectX device-dependent resources.");
+
+		DirectXDeviceResourcesAreUninitialized = true;
+
+		RootContent.OnDeviceDispose(new DeviceDisposeInfo(Application.Resources, DeviceResources));
+
+		foreach (var initializer in DeviceResourceInitializers)
+			initializer.OnDeviceDispose(Application.Resources, DeviceResources);
+
+		DeviceResources.Dispose();
+	}
+
+	/**
+	<summary>
+		<para>
+			Initializes DirectX resources that are dependent on the window size.
+		</para>
+	</summary>
+	**/
+	void InitializeDirectXStateDependentResources(bool nested = false) {
+		Logger.LogDebug("Initializing DirectX state-dependent resources.");
+
+		DirectXStateResourcesAreUninitialized = false;
+
+		// If the swap chain already exists, resize it.
+		if (DeviceResources.SwapChain != null) {
+			// Setting all values to 0 automatically chooses the width & height to match the client rect for HWNDs,
+			// and preserves the existing buffer count and format.
+			var result = DeviceResources.SwapChain.ResizeBuffers(0, 0, 0);
+
+			if (result == Vortice.DXGI.ResultCode.DeviceRemoved || result == Vortice.DXGI.ResultCode.DeviceReset) {
+				if (nested)
+					throw new Bug("1FC09E31-EEA4-466F-840A-4F74445C6B8A");
+
+				ClearDirectXStateDependentResources();
+				DisposeDirectXDeviceDependentResources();
+				InitializeDirectXDeviceDependentResources();
+				InitializeDirectXStateDependentResources(nested: true);
+
+				return;
+			}
+
+			else result.CheckError();
+		}
+
+		// If the swap chain does not exist, create it.
+		else {
+			// First, retrieve the underlying DXGI Device from the D3D Device.
+			// The swap must be created on the same adapter as the existing D3D Device.
+			using var dxgiDevice = DeviceResources.D3Device!.QueryInterface<IDXGIDevice4>();
+
+			// Next, get the parent factory from the DXGI Device.
+			using var dxgiAdapter = dxgiDevice.GetAdapter();
+			using var dxgiFactory = dxgiAdapter.GetParent<IDXGIFactory7>();
+
+			// Finally, create the swap chain.
+			using var swapChain = dxgiFactory.CreateSwapChainForHwnd(
+				DeviceResources.D3Device,
+				WindowHandle,
+				new SwapChainDescription1 {
+					Width = 0, // Use automatic sizing.
+					Height = 0,
+					Format = Format.B8G8R8A8_UNorm, // This is the most common swap chain format.
+					Stereo = false,
+					SampleDescription = new() {
+						Count = 1, // Don't use multi-sampling.
+						Quality = 0,
+					},
+					BufferUsage = Usage.RenderTargetOutput,
+					BufferCount = 2, // Use two buffers to enable flip effect.
+					Scaling = Scaling.Stretch,
+					SwapEffect = SwapEffect.FlipSequential, // MS recommends using this swap effect for all applications.
+					Flags = 0,
+				},
+				new SwapChainFullscreenDescription {
+					Windowed = true
+				},
+				null // allow on all displays
+			);
+
+			DeviceResources.SwapChain = swapChain.QueryInterface<IDXGISwapChain4>();
+
+			swapChain.Dispose();
+
+			// Ensure that DXGI does not queue more than one frame at a time.
+			// This both reduces latency and ensures that the application will only render
+			// after each VSync, minimizing power consumption.
+			dxgiDevice.SetMaximumFrameLatency(1);
+
+			dxgiFactory.MakeWindowAssociation(WindowHandle, WindowAssociationFlags.IgnoreAll);
+		}
+
+		// Get a D2D surface from the DXGI back buffer to use as the D2D render target.
+		// Direct2D needs the dxgi version of the backbuffer surface pointer.
+		DeviceResources.BackBuffer = DeviceResources.SwapChain.GetBuffer<IDXGISurface2>(0);
+
+		// So now we can set the Direct2D render target.
+		var dpi = Bridge.Dpi;
+
+		DeviceResources.D2DeviceContext!.SetDpi(dpi, dpi);
+		DeviceResources.D2DeviceContext.Target =
+		DeviceResources.D2RenderTarget = DeviceResources.D2DeviceContext.CreateBitmapFromDxgiSurface(DeviceResources.BackBuffer, new BitmapProperties1 {
+			BitmapOptions = BitmapOptions.Target | BitmapOptions.CannotDraw,
+			PixelFormat = new() {
+				Format = Format.B8G8R8A8_UNorm,
+				AlphaMode = Vortice.DCommon.AlphaMode.Premultiplied,
+			},
+			DpiX = dpi,
+			DpiY = dpi,
+		});
+	}
+
+	void ClearDirectXStateDependentResources() {
+		Logger.LogDebug("Clearing DirectX state-dependent resources.");
+
+		DirectXStateResourcesAreUninitialized = true;
+
+		DeviceResources.D2DeviceContext?.Target?.Dispose();
+		DeviceResources.D2RenderTarget?.Dispose();
+		DeviceResources.BackBuffer?.Dispose();
+
+		if (DeviceResources.D2DeviceContext != null)
+			DeviceResources.D2DeviceContext.Target = null;
+
+		DeviceResources.D2RenderTarget = null;
+		DeviceResources.BackBuffer = null;
+	}
+
+	void InvokeDirectXRender(Int2 windowHardwareSize) {
+		Logger.LogDebug("Invoking DirectX render {SZ}.", windowHardwareSize);
+
+		DeviceResources.D2DeviceContext!.BeginDraw();
+		DeviceResources.D2DeviceContext.Transform = Matrix3x2.CreateScale(Bridge.Zoom);
+
+		// Actual content rendering.
+		RootContent.OnRender(new RenderInfo(Application.Resources, DeviceResources));
+
+		DeviceResources.D2DeviceContext.EndDraw().Tee(out var drawResult);
+
+		// Present the rendered image to the window.
+		// Because the maximum frame latency is set to 1,
+		// the render loop will generally be throttled to the screen refresh rate,
+		// typically around 60Hz, by sleeping the application on Present
+		// until the screen is refreshed.
+		DeviceResources.SwapChain!.Present(1, 0).Tee(out var presentResult);
+
+		if (
+			   drawResult == Vortice.Direct2D1.ResultCode.RecreateTarget
+			|| presentResult == Vortice.DXGI.ResultCode.DeviceRemoved
+			|| presentResult == Vortice.DXGI.ResultCode.DeviceReset
+		) {
+			ClearDirectXStateDependentResources();
+			DisposeDirectXDeviceDependentResources();
+		}
+
+		else {
+			drawResult.CheckError();
+			presentResult.CheckError();
+		}
+	}
+
+	#endregion
 	#region Bridge handlers
 
-	void OnWindowState_programatic(WindowState previousState, WindowState newState) {
+	void OnBridgeState_programatic(WindowState previousState, WindowState newState) {
 		Logger.LogDebug("Programatically setting window state to {S}.", newState switch {
 			WindowState.Minimized => "minimized",
 			WindowState.Restored => "Restored",
@@ -509,10 +833,21 @@ class Win32Window : IDisposable {
 		}
 	}
 
+	void OnBridgeSize(int dpi, float zoom, Int2 hardwareSize) {
+		Logger.LogDebug("Updating {W}'s size {SZ} dpi={DPI} zoom={ZOOM}.", WindowHandle, hardwareSize, dpi, zoom);
+
+		var dpiScale = dpi / 96f;
+
+		Bridge.DpiScale = dpiScale;
+		Bridge.ScaledSize = ((Vector2) hardwareSize) / (dpiScale * zoom);
+
+		RequestRender();
+	}
+
 	#endregion
 	#region Win32 OS message handlers
 
-	void On_WM_SIZE(uint reason, ushort rawWidth, ushort rawHeight) {
+	void On_WM_SIZE(uint reason, ushort hardwareWidth, ushort hardwareHeight) {
 		var newState = reason switch {
 			SIZE_MAXIMIZED => WindowState.Maximized,
 			SIZE_MINIMIZED => WindowState.Minimized,
@@ -523,9 +858,28 @@ class Win32Window : IDisposable {
 			_ => throw new Bug("F14AD583-9C00-4C61-B6F9-B72E0553A17C"),
 		};
 
-		Bridge.StateSubject_observable.OnNext(newState);
+		Logger.LogDebug("WM_SIZE for {W}, setting size to {X}, {Y} {STATE}.", WindowHandle, hardwareWidth, hardwareHeight, newState);
 
-		Logger.LogDebug("Set window state to {S}.", newState);
+		Bridge.StateSubject_observable.OnNext(newState);
+		Bridge.HardwareSize = new Int2(hardwareWidth, hardwareHeight);
+	}
+
+	void On_WM_DPICHANGED(ushort dpi) {
+		Logger.LogDebug("WM_DPICHANGED for {H}, setting DPI to {D}.", WindowHandle, dpi);
+
+		Bridge.Dpi = dpi;
+	}
+
+	void On_WM_PAINT() {
+		Logger.LogDebug("WM_PAINT for {W}.", WindowHandle);
+
+		// According to  https://docs.microsoft.com/en-us/windows/win32/winmsg/about-messages-and-message-queues#queued-messages:
+		//
+		// > Multiple WM_PAINT messages for the same window are combined into a single WM_PAINT message,
+		// > consolidating all invalid parts of the client area into a single area.
+		BeginPaint(WindowHandle, out PAINTSTRUCT lpPaint);
+		RequestRender(); // TODO: should we use RunRenderPass() here?
+		EndPaint(WindowHandle, in lpPaint);
 	}
 
 	#endregion
@@ -566,6 +920,8 @@ class Win32Window : IDisposable {
 		Logger.LogDebug("Showing Win32 window.");
 
 		ShowWindow(WindowHandle, SW_NORMAL);
+
+		Bridge.Dpi = GetDpiForWindow(WindowHandle).CoerceToInt();
 	}
 
 	void DestroyWin32Window() {
@@ -579,8 +935,8 @@ class Win32Window : IDisposable {
 	internal LRESULT ProcessWin32OsMessage(uint message, WPARAM wParam, LPARAM lParam) {
 		switch (message) {
 			case WM_SIZE: /*         */ On_WM_SIZE(wParam, LOWORD(lParam), HIWORD(lParam)); break;
-			//case WM_DPICHANGED: /*   */ On_WM_DPICHANGED(LOWORD(wParam)); break;
-			//case WM_PAINT: /*        */ On_WM_PAINT(); break;
+			case WM_DPICHANGED: /*   */ On_WM_DPICHANGED(LOWORD(wParam)); break;
+			case WM_PAINT: /*        */ On_WM_PAINT(); break;
 
 			//case WM_MOUSEMOVE: /*    */ On_WM_MOUSEMOVE(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)); break;
 			//case WM_MOUSELEAVE: /*   */ On_WM_MOUSELEAVE(); break;
@@ -639,6 +995,8 @@ class Win32Window : IDisposable {
 	}
 
 	void EnterWin32FullScreen() {
+		Logger.LogDebug("Entering full screen mode.");
+
 		var monitor = new MONITORINFO { cbSize = (uint) Unsafe.SizeOf<MONITORINFO>() };
 
 		if (!(
@@ -664,6 +1022,8 @@ class Win32Window : IDisposable {
 	}
 
 	void ExitWin32FullScreen() {
+		Logger.LogDebug("Exising full screen mode.");
+
 		if (!(
 			   SetWindowLong(WindowHandle, GWL_STYLE, (int) DefaultStyle) != 0
 			&& SetWindowPlacement(WindowHandle, PlacementBeforeGoingFullScreen)
@@ -673,226 +1033,3 @@ class Win32Window : IDisposable {
 
 	#endregion
 }
-
-
-/*
-
-
-
-class Application : IDisposable {
-
-	IGraphicsDevice? _graphicsDevice;
-
-	public unsafe Application() {
-
-		// init window class was here
-
-		MainWindow = new Window("Vortice", 800, 600);
-	}
-
-	public static Application? Current { get; private set; }
-
-	public Window? MainWindow { get; private set; }
-
-	public virtual void Dispose() {
-		_graphicsDevice?.Dispose();
-	}
-
-	public void Tick() {
-		if (_graphicsDevice != null) {
-			_graphicsDevice.DrawFrame(OnDraw);
-		}
-		else {
-			OnDraw(MainWindow!.ClientSize.Width, MainWindow.ClientSize!.Height);
-		}
-	}
-
-	public unsafe void Run() {
-		InitializeBeforeRun();
-
-		while (true) {
-			if (PeekMessage(out var msg, default, 0, 0, PM_REMOVE)) {
-				TranslateMessage(&msg);
-				DispatchMessage(&msg);
-
-				if (msg.message == WM_QUIT)
-					break;
-			}
-
-			Tick();
-		}
-	}
-
-	protected override void InitializeBeforeRun() {
-		_graphicsDevice = new D3D11GraphicsDevice(MainWindow!);
-	}
-
-
-	protected override void OnDraw(int width, int height) {
-		((D3D11GraphicsDevice) _graphicsDevice!).DeviceContext.Flush();
-
-		if (_screenshot) {
-			SaveScreenshot("Screenshot.jpg");
-			_screenshot = false;
-		}
-	}
-
-
-	public string Title { get; private set; }
-	public SizeI ClientSize { get; private set; }
-
-	public unsafe Window(string title, int width, int height) {
-		Title = title;
-		ClientSize = new(width, height);
-
-
-	}
-
-
-}
-
-
-interface IGraphicsDevice { }
-
-
-class CoreView {
-
-	public void Run() {
-		// First, create the Direct3D device.
-
-		// This flag is required in order to enable compatibility with Direct2D.
-		var creationFlags = DeviceCreationFlags.BgraSupport;
-
-#if DEBUG
-		// If the project is in a debug build, enable debugging via SDK Layers with this flag.
-		creationFlags |= DeviceCreationFlags.Debug;
-#endif
-
-		// This array defines the ordering of feature levels that D3D should attempt to create.
-		var featureLevels = new[] {
-			FeatureLevel.Level_11_1,
-			FeatureLevel.Level_11_0,
-			FeatureLevel.Level_10_1,
-			FeatureLevel.Level_10_0,
-			FeatureLevel.Level_9_3,
-			FeatureLevel.Level_9_1,
-		};
-
-		ID3D11Device d3dDevice;
-		ID3D11DeviceContext d3dDeviceContext;
-
-		D3D11.D3D11CreateDevice(
-			IntPtr.Zero, // Specify nullptr to use the default adapter.
-			DriverType.Hardware,
-			creationFlags, // Optionally set debug and Direct2D compatibility flags.
-			featureLevels,
-			out d3dDevice,
-			out d3dDeviceContext
-		);
-
-		// Retrieve the Direct3D 11.1 interfaces.
-		D3dDevice = ComObject.As<ID3D11Device1>(d3dDevice);
-		D3dDeviceContext = ComObject.As<ID3D11DeviceContext1>(d3dDeviceContext);
-
-		// After the D3D device is created, create additional application resources.
-		InitializeWindowSizeDependentResources();
-
-		// Enter the render loop.
-		// Note that a UWP app should never exit.
-		while (true) {
-			// Process events incoming to the window.
-			Window!.Dispatcher.ProcessEvents(CoreProcessEventsOption.ProcessAllIfPresent);
-
-			// Specify the render target we created as the output target.
-			// Clear the render target to a solid color.
-			D3dDeviceContext.OMSetRenderTargets(RenderTargetView!);
-			D3dDeviceContext.ClearRenderTargetView(RenderTargetView, new Color4(0.071f, 0.04f, 0.561f));
-
-			// Present the rendered image to the window.
-			// Because the maximum frame latency is set to 1,
-			// the render loop will generally be throttled to the screen refresh rate,
-			// typically around 60Hz, by sleeping the application on Present
-			// until the screen is refreshed.
-			SwapChain!.Present(1, 0);
-		}
-	}
-
-	void InitializeWindowSizeDependentResources() {
-		RenderTargetView = null;
-
-		// If the swap chain already exists, resize it.
-		if (SwapChain != null)
-			SwapChain.ResizeBuffers(2, 0, 0, Format.B8G8R8A8_UNorm, 0);
-
-		// If the swap chain does not exist, create it.
-		else {
-			var swapChainDesc = new SwapChainDescription1 {
-				Stereo = false,
-				BufferUsage = Usage.RenderTargetOutput,
-				Scaling = Scaling.None,
-				Flags = 0,
-				Width = 0, // Use automatic sizing.
-				Height = 0,
-				Format = Format.B8G8R8A8_UNorm, // This is the most common swap chain format.
-				SampleDescription = new() {
-					Count = 1, // Don't use multi-sampling.
-					Quality = 0,
-				},
-				BufferCount = 2, // Use two buffers to enable flip effect.
-				SwapEffect = SwapEffect.FlipSequential, // MS recommends using this swap effect for all applications.
-			};
-
-			// Once the swap chain description is configured,
-			// it must be created on the same adapter as the existing D3D Device.
-
-			// First, retrieve the underlying DXGI Device from the D3D Device.
-			var dxgiDevice = ComObject.As<IDXGIDevice2>(D3dDevice);
-
-			// Ensure that DXGI does not queue more than one frame at a time.
-			// This both reduces latency and ensures that the application will only render
-			// after each VSync, minimizing power consumption.
-			dxgiDevice.SetMaximumFrameLatency(1);
-
-			// Next, get the parent factory from the DXGI Device.
-			var dxgiAdapter = dxgiDevice.GetAdapter();
-			var dxgiFactory = dxgiAdapter.GetParent<IDXGIFactory2>();
-
-			// Finally, create the swap chain.
-			SwapChain = dxgiFactory.CreateSwapChainForCoreWindow(
-				D3dDevice,
-				Window.As<IUnknown>(),
-				swapChainDesc,
-				null // allow on all displays
-			);
-		}
-
-		// Once the swap chain is created, create a render target view.
-		// This will allow Direct3D to render graphics to the window.
-
-		var backBuffer = SwapChain.GetBuffer<ID3D11Texture2D>(0);
-
-		RenderTargetView = D3dDevice!.CreateRenderTargetView(backBuffer);
-
-		// After the render target view is created, specify that the viewport,
-		// which describes what portion of the window to draw to,
-		// should cover the entire window.
-
-		var backBufferDesc = backBuffer.Description;
-		var viewport = new Viewport(0.0f, 0.0f, backBufferDesc.Width, backBufferDesc.Height, 0, 1);
-
-		D3dDeviceContext!.RSSetViewports(new[] { viewport });
-	}
-
-	ID3D11Device1? D3dDevice;
-	ID3D11DeviceContext1? D3dDeviceContext;
-	IDXGISwapChain1? SwapChain;
-	ID3D11RenderTargetView? RenderTargetView;
-
-	public void SetWindow(CoreWindow window) {
-		Window = window;
-
-		Window.PointerCursor = new CoreCursor(CoreCursorType.Arrow, 0);
-		Window.SizeChanged += (_, _) => InitializeWindowSizeDependentResources();
-	}
-}
-*/

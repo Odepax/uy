@@ -1,10 +1,8 @@
-﻿using LinqToYourDoom;
-using System;
+﻿using System;
 using System.Numerics;
-using System.Reactive.Concurrency;
-using System.Reactive.Disposables;
 using System.Reactive.Subjects;
 using System.Threading;
+using Vortice.Mathematics;
 
 namespace Uy;
 
@@ -62,30 +60,65 @@ public interface IWindowBridge {
 	/**
 	<summary>
 		<para>
-			Gets the DPI scale of the current window.
+			Gets the DPI of the current window.
 		</para>
 	</summary>
+	<remarks>
+		<para>
+			The difference between <see cref="Dpi"/> and <see cref="DpiScale"/>
+			is that <see cref="Dpi"/> returns the a number of virtual pixels per inch,
+			whereas <see cref="DpiScale"/> returns the scale compared to the standard of 96dpi.
+		</para>
+	</remarks>
+	**/
+	int Dpi { get; }
+
+	/**
+	<inheritdoc cref="Dpi"/>
+	**/
+	IObservable<int> DpiObservable { get; }
+
+	/**
+	<inheritdoc cref="Dpi"/>
 	**/
 	float DpiScale { get; }
 
 	/**
-	<inheritdoc cref="DpiScale"/>
+	<inheritdoc cref="Dpi"/>
 	**/
 	IObservable<float> DpiScaleObservable { get; }
 
 	/**
 	<summary>
 		<para>
-			Gets the size of the current window.
+			Gets the size of the current window's drawaing area,
+			expressed in hardware pixels,
+			effectively mapping to the pixels on the user's screen.
 		</para>
 	</summary>
 	**/
-	Vector2 Size { get; }
+	Int2 HardwareSize { get; }
 
 	/**
-	<inheritdoc cref="Size"/>
+	<inheritdoc cref="HardwareSize"/>
 	**/
-	IObservable<Vector2> SizeObservable { get; }
+	IObservable<Int2> HardwareSizeObservable { get; }
+
+	/**
+	<summary>
+		<para>
+			Gets the size of the current window's drawaing area,
+			expressed in arbitrary units,
+			i.e. after applying <see cref="DpiScale"/> and <see cref="Zoom"/>.
+		</para>
+	</summary>
+	**/
+	Vector2 ScaledSize { get; }
+
+	/**
+	<inheritdoc cref="ScaledSize"/>
+	**/
+	IObservable<Vector2> ScaledSizeObservable { get; }
 
 	/**
 	<summary>
@@ -161,4 +194,14 @@ public interface IWindowBridge {
 				-> Prompt simple text
 				-> Prompt custom types
 	*/
+
+	/**
+	<summary>
+		<para>
+			Marks the drawing that's currently painted on the current window's client area as stale,
+			forcing the next iteration of the game loop to invoke a render pass.
+		</para>
+	</summary>
+	**/
+	void RequestRender();
 }

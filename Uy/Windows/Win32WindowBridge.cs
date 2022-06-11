@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading;
+using Vortice.Mathematics;
 
 namespace Uy;
 
@@ -10,22 +11,28 @@ class Win32WindowBridge : IWindowBridge, IDisposable {
 	ISubject<WindowState> IWindowBridge.StateSubject => StateSubject;
 	ISubject<string> IWindowBridge.TitleSubject => TitleSubject;
 	ISubject<float> IWindowBridge.ZoomSubject => ZoomSubject;
+	IObservable<int> IWindowBridge.DpiObservable => DpiSubject;
 	IObservable<float> IWindowBridge.DpiScaleObservable => DpiScaleSubject;
-	IObservable<Vector2> IWindowBridge.SizeObservable => SizeSubject;
+	IObservable<Int2> IWindowBridge.HardwareSizeObservable => HardwareSizeSubject;
+	IObservable<Vector2> IWindowBridge.ScaledSizeObservable => ScaledSizeSubject;
 
 	public readonly ISubject<WindowState> StateSubject;
 	public readonly Subject<WindowState> StateSubject_observer;
 	public readonly BehaviorSubject<WindowState> StateSubject_observable;
 	public readonly BehaviorSubject<string> TitleSubject = new(string.Empty);
 	public readonly BehaviorSubject<float> ZoomSubject = new(1f);
+	public readonly BehaviorSubject<int> DpiSubject = new(96);
 	public readonly BehaviorSubject<float> DpiScaleSubject = new(1f);
-	public readonly BehaviorSubject<Vector2> SizeSubject = new(Vector2.Zero);
+	public readonly BehaviorSubject<Int2> HardwareSizeSubject = new(Int2.Zero);
+	public readonly BehaviorSubject<Vector2> ScaledSizeSubject = new(Vector2.Zero);
 
 	public WindowState State { get => StateSubject_observable.Value; set => StateSubject_observer.OnNext(value); }
 	public string Title { get => TitleSubject.Value; set => TitleSubject.OnNext(value); }
 	public float Zoom { get => ZoomSubject.Value; set => ZoomSubject.OnNext(value); }
+	public int Dpi { get => DpiSubject.Value; set => DpiSubject.OnNext(value); }
 	public float DpiScale { get => DpiScaleSubject.Value; set => DpiScaleSubject.OnNext(value); }
-	public Vector2 Size { get => SizeSubject.Value; set => SizeSubject.OnNext(value); }
+	public Int2 HardwareSize { get => HardwareSizeSubject.Value; set => HardwareSizeSubject.OnNext(value); }
+	public Vector2 ScaledSize { get => ScaledSizeSubject.Value; set => ScaledSizeSubject.OnNext(value); }
 
 	CancellationToken IWindowBridge.WindowOpened => WindowOpened.Token;
 	CancellationToken IWindowBridge.WindowClosing => WindowClosing.Token;
@@ -68,8 +75,10 @@ class Win32WindowBridge : IWindowBridge, IDisposable {
 		StateSubject_observable.Dispose();
 		TitleSubject.Dispose();
 		ZoomSubject.Dispose();
+		DpiSubject.Dispose();
 		DpiScaleSubject.Dispose();
-		SizeSubject.Dispose();
+		HardwareSizeSubject.Dispose();
+		ScaledSizeSubject.Dispose();
 
 		WindowOpened.Dispose();
 		WindowClosing.Dispose();
@@ -77,4 +86,6 @@ class Win32WindowBridge : IWindowBridge, IDisposable {
 	}
 
 	public void CloseWindow() => throw new NotImplementedException();
+
+	public void RequestRender() => LinkedWindow!.RequestRender();
 }
