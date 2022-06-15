@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Numerics;
+using System.Reactive.Concurrency;
 using System.Reactive.Subjects;
 using System.Threading;
 using Vortice.Mathematics;
@@ -15,6 +16,27 @@ namespace Uy;
 </summary>
 **/
 public interface IWindowBridge {
+	/**
+	<summary>
+		<para>
+			Represents an object that schedules units of work
+			on the <see cref="Uy"/> application's game loop.
+		</para>
+	</summary>
+	<remarks>
+		<para>
+			Work items are run after processing the OS' messages,
+			but before the render pass.
+			Their execution <b>blocks the UI thread</b>;
+			work items scheduled on this scheduler must be kept light and swift!
+		</para>
+		<para>
+			The <see cref="GameLoopScheduler"/> must be thread-safe.
+		</para>
+	</remarks>
+	**/
+	IScheduler GameLoopScheduler { get; }
+
 	/**
 	<summary>
 		<para>

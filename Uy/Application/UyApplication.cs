@@ -61,7 +61,7 @@ class UyApplication<TMainWindowContent> : BackgroundService where TMainWindowCon
 
 			// If we got there, but not because the host application is shutting down,
 			// it means the game loop stopped with WM_QUIT,
-			// which is a signal to close the host application.
+			// which is a signal to shutdown the host application.
 			if (stoppingToken.IsCancellationRequested.Nt())
 				ApplicationLifetime.StopApplication();
 		}, TaskCreationOptions.LongRunning);
@@ -87,9 +87,10 @@ class Win32Application : IDisposable {
 	internal readonly IServiceProvider ServiceProvider;
 	internal readonly FreeLibrarySafeHandle InstanceHandle;
 	internal readonly DeviceIndependentResourceDictionary Resources;
+	internal readonly GameLoopScheduler GameLoopScheduler = new();
 
-	readonly ConcurrentDictionary<HWND, Win32Window> Windows = new();
 	readonly ILogger<Win32Application> Logger;
+	readonly ConcurrentDictionary<HWND, Win32Window> Windows = new();
 
 	int MainWindowCount;
 
@@ -102,8 +103,8 @@ class Win32Application : IDisposable {
 	**/
 	public Win32Application(IServiceProvider serviceProvider) {
 		ServiceProvider = serviceProvider;
-		InstanceHandle = GetModuleHandle(null as string) ?? throw new Bug("6ADC2291-23FF-4829-82BE-666FBAD0961F"); // NULL => Unable to get the Win32 instance handle.
 		Logger = ServiceProvider.GetRequiredService<ILogger<Win32Application>>();
+		InstanceHandle = GetModuleHandle(null as string) ?? throw new Bug("6ADC2291-23FF-4829-82BE-666FBAD0961F"); // NULL => Unable to get the Win32 instance handle.
 
 		InitializeDpiAwareness();
 		RegisterWin32WindowClass();
@@ -162,6 +163,8 @@ class Win32Application : IDisposable {
 		var lastTimestamp = 0L;
 		var clockStopwatch = Stopwatch.StartNew();
 
+		GameLoopScheduler.Now = DateTimeOffset.Now;
+
 		while (stoppingToken.IsCancellationRequested.Nt()) {
 			// OS messages.
 			MSG msg;
@@ -195,6 +198,10 @@ class Win32Application : IDisposable {
 			var secondsSinceFirstTick = (lastTimestamp = timestamp) / 1_000f;
 
 			_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
+
+			// Scheduled work.
+			GameLoopScheduler.Now += clockStopwatch.Elapsed;
+			GameLoopScheduler.Flush();
 
 			// Render.
 			foreach (var window in Windows.Values)
@@ -409,7 +416,8 @@ class Win32Application : IDisposable {
 class Win32Window : IDisposable {
 	public readonly bool IsMainWindow = true;
 
-	readonly Win32Application Application;
+	internal readonly Win32Application Application;
+
 	readonly IServiceScope ServiceScope;
 	readonly Win32WindowBridge Bridge;
 	readonly ILogger<Win32Window> Logger;
@@ -613,9 +621,9 @@ class Win32Window : IDisposable {
 			IntPtr.Zero, // Specify nullptr to use the default adapter.
 			DriverType.Hardware,
 			DeviceCreationFlags.BgraSupport // This flag is required in order to enable compatibility with Direct2D.
-			#if DEBUG
+#if DEBUG
 				| DeviceCreationFlags.Debug // If the project is in a debug build, enable debugging via SDK Layers with this flag.
-			#endif
+#endif
 			,
 			new[] { // This array defines the ordering of feature levels that D3D should attempt to create.
 				D3FeatureLevel.Level_11_1,
@@ -1016,9 +1024,9 @@ class Win32Window : IDisposable {
 		GetWindowRect(WindowHandle, out var windowRect);
 
 		return windowRect.left == monitor.rcMonitor.left
-		    && windowRect.right == monitor.rcMonitor.right
-		    && windowRect.top == monitor.rcMonitor.top
-		    && windowRect.bottom == monitor.rcMonitor.bottom;
+			&& windowRect.right == monitor.rcMonitor.right
+			&& windowRect.top == monitor.rcMonitor.top
+			&& windowRect.bottom == monitor.rcMonitor.bottom;
 	}
 
 	void ExitWin32FullScreen() {

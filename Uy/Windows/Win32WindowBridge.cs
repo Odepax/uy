@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Numerics;
+using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading;
@@ -8,6 +9,8 @@ using Vortice.Mathematics;
 namespace Uy;
 
 class Win32WindowBridge : IWindowBridge, IDisposable {
+	public IScheduler GameLoopScheduler => LinkedWindow!.Application.GameLoopScheduler;
+
 	ISubject<WindowState> IWindowBridge.StateSubject => StateSubject;
 	ISubject<string> IWindowBridge.TitleSubject => TitleSubject;
 	ISubject<float> IWindowBridge.ZoomSubject => ZoomSubject;
