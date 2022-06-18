@@ -112,7 +112,7 @@ class Win32Application : IDisposable {
 		var lastTimestamp = 0L;
 		var clockStopwatch = Stopwatch.StartNew();
 
-		GameLoopScheduler.Now = DateTimeOffset.Now;
+		GameLoopScheduler.AdvanceTo(DateTimeOffset.Now);
 
 		while (stoppingToken.IsCancellationRequested.Nt()) {
 			// OS messages.
@@ -149,8 +149,7 @@ class Win32Application : IDisposable {
 			_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
 
 			// Scheduled work.
-			GameLoopScheduler.Now += clockStopwatch.Elapsed;
-			GameLoopScheduler.Flush();
+			GameLoopScheduler.AdvanceBy(clockStopwatch.Elapsed);
 
 			// Render.
 			foreach (var window in Windows.Values)
