@@ -17,6 +17,7 @@ using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.WindowsAndMessaging;
 using static Windows.Win32.Graphics.Gdi.MONITOR_FROM_FLAGS;
 using static Windows.Win32.PInvoke;
+using static Windows.Win32.UI.WindowsAndMessaging.PEEK_MESSAGE_REMOVE_TYPE;
 using static Windows.Win32.UI.WindowsAndMessaging.SET_WINDOW_POS_FLAGS;
 using static Windows.Win32.UI.WindowsAndMessaging.SHOW_WINDOW_CMD;
 using static Windows.Win32.UI.WindowsAndMessaging.WINDOW_EX_STYLE;
@@ -482,6 +483,8 @@ class Win32Window : IDisposable {
 	#endregion
 	#region Win32 OS message handlers
 
+	int WM_KEYDOWN_repeatCount;
+
 	void On_WM_SIZE(uint reason, ushort hardwareWidth, ushort hardwareHeight) {
 		var newState = reason switch {
 			SIZE_MAXIMIZED => WindowState.Maximized,
@@ -516,6 +519,227 @@ class Win32Window : IDisposable {
 		RequestRender(); // TODO: should we use RunRenderPass() here?
 		EndPaint(WindowHandle, in lpPaint);
 	}
+
+	bool On_WM_KEYDOWN(uint virtualKeyCode, int flags) {
+		var extended = GET_KEY_EXTENDED_LPARAM(flags);
+
+		if (Test_WM_KEY_AltGrSequence(virtualKeyCode, extended, WM_KEYDOWN))
+			return true;
+
+		var repeatCount = GET_KEY_REPEATCOUNT_LPARAM(flags);
+		var scanCode = GET_KEY_SCANCODE_LPARAM(flags);
+		var wasDown = GET_KEY_PREVIOUS_LPARAM(flags);
+		var (hardwareKey, layoutKey) = Map_WM_KEY(virtualKeyCode, scanCode, extended);
+
+		WM_KEYDOWN_repeatCount = wasDown * (WM_KEYDOWN_repeatCount + repeatCount);
+
+		var @event = new KeyDownEvent(hardwareKey, layoutKey, WM_KEYDOWN_repeatCount);
+
+		RootContent.OnKeyDown(@event);
+
+		// TODO: If the KeyDown event is handled, discard the next WM_CHAR message.
+		//if (!@event.ContinueProcessing) _ = (
+		//	   User32.PeekMessage(out _, WindowHandle, (uint) WindowsMessages.WM_CHAR, (uint) WindowsMessages.WM_CHAR, PM_REMOVE)
+		//	|| User32.PeekMessage(out _, WindowHandle, (uint) WindowsMessages.WM_UNICHAR, (uint) WindowsMessages.WM_UNICHAR, PM_REMOVE)
+		//);
+
+		return @event.ContinueProcessing;
+	}
+
+	bool On_WM_KEYUP(uint virtualKeyCode, int flags) {
+		var extended = GET_KEY_EXTENDED_LPARAM(flags);
+
+		if (Test_WM_KEY_AltGrSequence(virtualKeyCode, extended, WM_KEYUP))
+			return true;
+
+		var scanCode = GET_KEY_SCANCODE_LPARAM(flags);
+		var (hardwareKey, layoutKey) = Map_WM_KEY(virtualKeyCode, scanCode, extended);
+
+		var @event = new KeyUpEvent(hardwareKey, layoutKey);
+
+		RootContent.OnKeyUp(@event);
+
+		return @event.ContinueProcessing;
+	}
+
+	bool Test_WM_KEY_AltGrSequence(uint virtualKeyCode, bool extended, uint message) {
+		// Hack stolen from OpenTK:
+		//
+		// > AltGr sends CtrlLeft followed by AltRight.
+		// >
+		// > We only want one event for AltGr,
+		// > so if we detect this sequence,
+		// > we discard the current CtrlLeft message,
+		// > and report AltRight normally later.
+		if (virtualKeyCode == 0x11 && !extended) {
+			var currentMsgTime = GetMessageTime();
+
+			if (
+				   PeekMessage(out var nextMsg, WindowHandle, message, message, PM_NOREMOVE)
+				&& nextMsg.wParam == 0x12
+				&& ((nextMsg.lParam >> 24) & 0x1) == 1
+				&& nextMsg.time == currentMsgTime
+			)
+				return true;
+		}
+
+		return false;
+	}
+
+	static (Key Hardware, Key Layout) Map_WM_KEY(uint virtualKeyCode, byte scanCode, bool extended) => (
+		Hardware: scanCode switch {
+			1 => Key.Escape,
+
+			59 => Key.F1,
+			60 => Key.F2,
+			61 => Key.F3,
+			62 => Key.F4,
+			63 => Key.F5,
+			64 => Key.F6,
+			65 => Key.F7,
+			66 => Key.F8,
+			67 => Key.F9,
+			68 => Key.F10,
+			87 => Key.F11,
+			88 => Key.F12,
+			// => Key.F13,  => Key.F14,  => Key.F15,  => Key.F16, // Cannot try out these ones with my keyboard...
+			// => Key.F17,  => Key.F18,  => Key.F19,  => Key.F20,
+			// => Key.F21,  => Key.F22,  => Key.F23,  => Key.F24,
+
+			41 => Key.Backquote,
+			2 => Key.Digit1,
+			3 => Key.Digit2,
+			4 => Key.Digit3,
+			5 => Key.Digit4,
+			6 => Key.Digit5,
+			7 => Key.Digit6,
+			8 => Key.Digit7,
+			9 => Key.Digit8,
+			10 => Key.Digit9,
+			11 => Key.Digit0,
+			12 => Key.Minus,
+			13 => Key.Equal,
+			//IntlYen, // Cannot try out this one with my keyboard...
+
+			16 => Key.KeyQ,
+			17 => Key.KeyW,
+			18 => Key.KeyE,
+			19 => Key.KeyR,
+			20 => Key.KeyT,
+			21 => Key.KeyY,
+			22 => Key.KeyU,
+			23 => Key.KeyI,
+			24 => Key.KeyO,
+			25 => Key.KeyP,
+			26 => Key.BracketLeft,
+			27 => Key.BracketRight,
+			30 => Key.KeyA,
+			31 => Key.KeyS,
+			32 => Key.KeyD,
+			33 => Key.KeyF,
+			34 => Key.KeyG,
+			35 => Key.KeyH,
+			36 => Key.KeyJ,
+			37 => Key.KeyK,
+			38 => Key.KeyL,
+			39 => Key.Semicolon,
+			40 => Key.Quote,
+			43 => Key.Backslash,
+			86 => Key.IntlBackslash,
+			44 => Key.KeyZ,
+			45 => Key.KeyX,
+			46 => Key.KeyC,
+			47 => Key.KeyV,
+			48 => Key.KeyB,
+			49 => Key.KeyN,
+			50 => Key.KeyM,
+			51 => Key.Comma,
+			52 => Key.Period,
+			53 when !extended => Key.Slash,
+			//Bang, // Cannot try out this one with my keyboard...
+			//IntlRo, // Cannot try out this one with my keyboard...
+
+			15 => Key.Tab,
+			42 => Key.ShiftLeft,
+			29 when extended => Key.ControlRight,
+			29 => Key.ControlLeft,
+			91 => Key.MetaLeft,
+			56 when extended => Key.AltRight,
+			56 => Key.AltLeft,
+			57 => Key.Space,
+			92 => Key.MetaRight,
+			93 => Key.ContextMenu,
+			54 => Key.ShiftRight,
+			28 when !extended => Key.Enter,
+			14 => Key.Backspace,
+			82 when extended => Key.Insert,
+			83 when extended => Key.Delete,
+			71 when extended => Key.Home,
+			79 when extended => Key.End,
+			73 when extended => Key.PageUp,
+			81 when extended => Key.PageDown,
+			69 => Key.Pause,
+
+			72 when extended => Key.ArrowUp,
+			77 when extended => Key.ArrowRight,
+			80 when extended => Key.ArrowDown,
+			75 when extended => Key.ArrowLeft,
+
+			82 => Key.Numpad0,
+			79 => Key.Numpad1,
+			80 => Key.Numpad2,
+			81 => Key.Numpad3,
+			75 => Key.Numpad4,
+			76 => Key.Numpad5,
+			77 => Key.Numpad6,
+			71 => Key.Numpad7,
+			72 => Key.Numpad8,
+			73 => Key.Numpad9,
+			83 => Key.NumpadDecimal,
+			28 => Key.NumpadEnter,
+			//NumpadComma, // Cannot try out this one with my keyboard...
+			78 => Key.NumpadAdd,
+			74 => Key.NumpadSubtract,
+			55 => Key.NumpadMultiply,
+			53 => Key.NumpadDivide,
+			//NumpadEqual, // Cannot try out this one with my keyboard...
+			//NumpadClear, // Cannot try out this one with my keyboard...
+			//NumpadParenLeft, // Cannot try out this one with my keyboard...
+			//NumpadParenRight, // Cannot try out this one with my keyboard...
+			//NumpadBackspace, // Cannot try out this one with my keyboard...
+			//NumpadStar, // Cannot try out this one with my keyboard...
+			//NumpadHash, // Cannot try out this one with my keyboard...
+			//NumpadMemoryStore, // Cannot try out this one with my keyboard...
+			//NumpadMemoryAdd, // Cannot try out this one with my keyboard...
+			//NumpadMemorySubtract, // Cannot try out this one with my keyboard...
+			//NumpadMemoryRecall, // Cannot try out this one with my keyboard...
+			//NumpadMemoryClear, // Cannot try out this one with my keyboard...
+
+			//Key.BrowserHome, // Cannot try out this one with my keyboard...
+			//Key.BrowserFavorites, // Cannot try out this one with my keyboard...
+			//Key.BrowserBackward, // Cannot try out this one with my keyboard...
+			//Key.BrowserForward, // Cannot try out this one with my keyboard...
+			//Key.BrowserRefresh, // Cannot try out this one with my keyboard...
+			//Key.BrowserSearch, // Cannot try out this one with my keyboard...
+			//Key.BrowserStop, // Cannot try out this one with my keyboard...
+
+			_ => (Key) scanCode
+		},
+		Layout: virtualKeyCode switch {
+			0x10 when extended || scanCode == 54 => Key.ShiftRight,
+			0x10 => Key.ShiftLeft,
+
+			0x11 when extended => Key.ControlRight,
+			0x11 => Key.ControlLeft,
+
+			0x12 when extended => Key.AltRight,
+			0x12 => Key.AltLeft,
+
+			0x0D when extended => Key.NumpadEnter,
+
+			_ => (Key) virtualKeyCode
+		}
+	);
 
 	#endregion
 	#region Win32 stuff
@@ -592,22 +816,22 @@ class Win32Window : IDisposable {
 			//case WM_XBUTTONDBLCLK: /**/ On_WM__BUTTONDOWN(HIWORD(wParam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2, true); break;
 			//case WM_XBUTTONUP: /*    */ On_WM__BUTTONUP__(HIWORD(wParam) == 1 ? Key.MouseExtra1 : Key.MouseExtra2); break;
 
-			//case WM_KEYDOWN: /*      */ On_WM_KEYDOWN(wParam, lParam); break;
-			//case WM_KEYUP: /*        */ On_WM_KEYUP(wParam, lParam); break;
-			//case WM_SYSKEYDOWN: {
-			//	// System keys are sent to the default procedure if the events are not blocked.
-			//	if (On_WM_KEYDOWN(wParam, lParam))
-			//		return DefWindowProc(WindowHandle, message, wParam, lParam);
+			case WM_KEYDOWN: /*      */On_WM_KEYDOWN(wParam, lParam);break;
+			case WM_KEYUP: /*        */On_WM_KEYUP(wParam, lParam);break;
+			case WM_SYSKEYDOWN: {
+				// System keys are sent to the default procedure if the events are not blocked.
+				if (On_WM_KEYDOWN(wParam, lParam))
+					return DefWindowProc(WindowHandle, message, wParam, lParam);
 
-			//	break;
-			//}
-			//case WM_SYSKEYUP: {
-			//	// System keys are sent to the default procedure if the events are not blocked.
-			//	if (On_WM_KEYUP(wParam, lParam))
-			//		return DefWindowProc(WindowHandle, message, wParam, lParam);
+				break;
+			}
+			case WM_SYSKEYUP: {
+				// System keys are sent to the default procedure if the events are not blocked.
+				if (On_WM_KEYUP(wParam, lParam))
+					return DefWindowProc(WindowHandle, message, wParam, lParam);
 
-			//	break;
-			//}
+				break;
+			}
 
 			//case WM_CHAR: /*         */ On_WM_CHAR((char) wParam, lParam);
 			//case WM_UNICHAR: /*      */ On_WM_CHAR(char.ConvertFromUtf32(unchecked((int) wParam)), lParam);

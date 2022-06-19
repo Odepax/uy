@@ -13,6 +13,7 @@ GET_Y_LPARAM
 GetClientRect
 GetDpiForWindow
 GetMessage
+GetMessageTime
 GetModuleHandle
 GetMonitorInfo
 GetSystemMetrics
