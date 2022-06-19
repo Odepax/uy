@@ -458,8 +458,10 @@ class Win32Window : IDisposable {
 			_ => throw new Bug("A1057B36-71C8-4758-A0D1-FC1FA68CE634"),
 		});
 
-		if (newState == WindowState.FullScreen)
+		if (newState == WindowState.FullScreen) {
 			EnterWin32FullScreen();
+			ShowWindow(WindowHandle, SW_SHOW);
+		}
 
 		else {
 			if (previousState == WindowState.FullScreen)
