@@ -2,82 +2,103 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Debug;
+using System;
 using System.Numerics;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using Uy;
 using Vortice.Direct2D1;
 using Vortice.DirectWrite;
 using Vortice.Mathematics;
-using WindowState = Uy.WindowState;
+
+using static Uy.Key;
 
 Host
 	.CreateDefaultBuilder(args)
+	#if DEBUG
 	.ConfigureLogging(logging => {
 		logging.ClearProviders();
 		logging.AddDebug();
 		logging.AddFilter<DebugLoggerProvider>(logLevel => LogLevel.Debug <= logLevel);
 		logging.SetMinimumLevel(LogLevel.None);
 	})
+	#endif
 	.ConfigureServices(services => {
-		services.AddUy<MainWindowRootControl>();
-		services.AddTransient<MainWindowRootControl>();
+		services.AddUy<MainWindowRootContent>();
+		services.AddTransient<MainWindowRootContent>();
 	})
 	.Build()
 	.Run();
 
-class MainWindowRootControl : IWindowRootContent {
-	readonly IDeviceIndependentResourceDictionary ApplicationResources;
-	readonly IWindowBridge CurrentWindow;
+class MainWindowRootContent : IWindowRootContent, IDisposable {
+	#region Disposable
 
-	readonly IDWriteTextLayout4 TextLayout;
+	readonly CompositeDisposable Control = new();
+	readonly CompositeDisposable Device = new();
 
-	ID2D1SolidColorBrush? Background;
-	ID2D1SolidColorBrush? Foreground;
-
-	public MainWindowRootControl(IDeviceIndependentResourceDictionary applicationResources, IWindowBridge currentWindow, ILogger<MainWindowRootControl> logger) {
-		ApplicationResources = applicationResources;
-		CurrentWindow = currentWindow;
-
-		CurrentWindow.Title = "Hello, there!";
-		CurrentWindow.State = WindowState.Restored;
-		CurrentWindow.WindowClosing.Register(() => {
-			logger.LogDebug("They came from.... Behind!");
-		});
-
-		using var textFormat = ApplicationResources.WriteFactory.CreateTextFormat("JetBrains Mono", FontWeight.Medium, FontStyle.Normal, 16);
-		using var textLayout = ApplicationResources.WriteFactory.CreateTextLayout("Hello, there!", textFormat, float.MaxValue, float.MaxValue);
-
-		TextLayout = textLayout.QueryInterface<IDWriteTextLayout4>();
-	}
-
-	public void OnDeviceInit(DeviceInitInfo info) {
-		Background = info.DeviceResources.D2DeviceContext.CreateSolidColorBrush(Colors.Gold);
-		Foreground = info.DeviceResources.D2DeviceContext.CreateSolidColorBrush(Colors.Black);
+	public void Dispose() {
+		Device.Dispose();
+		Control.Dispose();
 	}
 
 	public void OnDeviceDispose(DeviceDisposeInfo info) {
-		Background?.Dispose();
-		Foreground?.Dispose();
+		Device.Clear();
+	}
 
-		Background = null;
-		Foreground = null;
+	#endregion
+
+	readonly IWindowBridge CurrentWindow;
+	Vector2 AllocatedSize;
+	Box4 AllocatedBox;
+
+	readonly IDWriteTextFormat3 Font;
+
+	ID2D1SolidColorBrush? Color;
+
+	int CounterValue;
+
+	public MainWindowRootContent(IWindowBridge currentWindow, IDeviceIndependentResourceDictionary applicationResources) {
+		CurrentWindow = currentWindow;
+
+		CurrentWindow.ScaledSizeObservable
+			.Subscribe(size => {
+				AllocatedSize = size;
+				AllocatedBox = Box4.FromLeftTop(Vector2.Zero, size);
+			})
+			.DisposeWith(Control);
+
+		using (var font_tmp = applicationResources.WriteFactory.CreateTextFormat("JetBrains Mono", 16))
+			Font = font_tmp.QueryInterface<IDWriteTextFormat3>().DisposeWith(Control);
+	}
+
+	public void OnDeviceInit(DeviceInitInfo info) {
+		var context = info.DeviceResources.D2DeviceContext;
+
+		Color = context
+			.CreateSolidColorBrush(Colors.Lime)
+			.DisposeWith(Device);
+	}
+
+	public void OnKeyDown(KeyDownEvent @event) {
+		if (@event.IsNotRepeated && @event.LayoutKey == KeyC) {
+			@event.StopProcessing();
+			++CounterValue;
+			CurrentWindow.RequestRender();
+		}
+	}
+
+	public void OnKeyUp(KeyUpEvent @event) {
 	}
 
 	public void OnRender(RenderInfo info) {
-		var allocatedSize = CurrentWindow.ScaledSize;
-		var allocatedBox = Box4.FromLeftTop(Vector2.Zero, allocatedSize);
 		var context = info.DeviceResources.D2DeviceContext;
 
-		var rectBox = allocatedBox.Deflated(32);
-		var rect = new Rect(rectBox.LeftTop, new Size(rectBox.Size));
-		var textBox = rectBox.Deflated(32).Normalized();
-
-		TextLayout.MaxWidth = textBox.Width;
-		TextLayout.MaxHeight = textBox.Height;
-
-		var textSize = new Vector2(TextLayout.Metrics.Width, TextLayout.Metrics.Height);
-
-		context.Clear(Colors.Fuchsia);
-		context.FillRectangle(rect, Background!);
-		context.DrawTextLayout(Box4.FromCenter(allocatedBox.CenterAnchor, textSize).LeftTop, TextLayout, Foreground!);
+		context.Clear(Colors.Black);
+		context.DrawText(CounterValue.ToString("0\nPress C to count\\."), Font, AllocatedBox.Deflated(16).ToRect(), Color!);
 	}
+}
+
+static class Box4Extensions {
+	public static Rect ToRect(this Box4 @this) =>
+		new(@this.Left, @this.Top, @this.Width, @this.Height);
 }
