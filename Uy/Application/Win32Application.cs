@@ -236,7 +236,7 @@ class Win32Application : IDisposable {
 				// > or both, when registering the window class.
 				style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS | CS_OWNDC,
 
-				hIcon = default,
+				hIcon = LoadIcon((HINSTANCE) InstanceHandle.DangerousGetHandle(), IDI_APPLICATION),
 				hbrBackground = default,
 				hCursor = LoadCursor(default, IDC_ARROW),
 			};

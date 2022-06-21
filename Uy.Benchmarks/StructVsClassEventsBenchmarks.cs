@@ -73,7 +73,7 @@ class MouseDownEvent : MouseEvent {
 class SingletonUserInputEvent {
 	public bool ContinueProcessing { get; internal set; } = true;
 
-	protected SingletonUserInputEvent() { }
+	protected SingletonUserInputEvent() {}
 
 	public void StopProcessing() => ContinueProcessing = false;
 }

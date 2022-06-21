@@ -23,7 +23,9 @@ GetWindowRect
 HIWORD
 HWND_TOP
 IDC_ARROW
+IDI_APPLICATION
 LoadCursor
+LoadIcon
 LOWORD
 MonitorFromWindow
 PeekMessage
