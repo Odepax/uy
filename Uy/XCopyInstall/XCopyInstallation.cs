@@ -44,7 +44,8 @@ namespace Uy;
 			<description>
 				<para>
 					<see cref="XCopyInstallation"/> differentiates between
-					<see cref="StateScope.Light">lightweight</see> and <see cref="StateScope.Heavy">heavyweight</see> data.
+					<see cref="StateScope.Light">lightweight, hot</see> data,
+					and <see cref="StateScope.Heavy">heavyweight, cold</see> data.
 					System administrators may want to create junctions
 					to move <see cref="StateScope.Heavy">heavyweight</see> data to the HDD,
 					realeasing pressure off the SSD.

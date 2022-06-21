@@ -11,7 +11,9 @@ public enum StateScope {
 	Temp /*           */ = 0b_01_00_000_00,
 
 	Light /*          */ = 0b_00_10_000_00,
+	Hot = Light,
 	Heavy /*          */ = 0b_00_01_000_00,
+	Cold = Heavy,
 
 	AllUsers /*       */ = 0b_00_00_100_00,
 	CurrentUser /*    */ = 0b_00_00_010_00,
