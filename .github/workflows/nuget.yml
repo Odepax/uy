@@ -20,4 +20,5 @@ jobs:
         dotnet-version: 6.0.x
 
     - name: "Publish NuGet"
-      run: 'dotnet test --configuration "Release" && dotnet pack "Uy" --configuration "Release" --no-build --output "./bin/NuGet" && dotnet nuget push "./bin/NuGet/*.nupkg" --source "https://api.nuget.org/v3/index.json" --api-key "${{ secrets.GH_NUGET_KEY_UY }}"'
+      shell: powershell
+      run: 'dotnet pack "Uy" --configuration "Release" --no-build --output "./bin/NuGet" ; dotnet nuget push "./bin/NuGet/$(ls ./bin/NuGet -Name)" --source "https://api.nuget.org/v3/index.json" --api-key "${{ secrets.GH_NUGET_KEY_UY }}"'
