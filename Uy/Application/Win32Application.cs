@@ -141,11 +141,11 @@ class Win32Application : IDisposable {
 				break;
 
 			// Clock update.
-			var timestamp = clockStopwatch.ElapsedMilliseconds;
-			var secondsSinceLastTick = (timestamp - lastTimestamp) / 1_000f;
-			var secondsSinceFirstTick = (lastTimestamp = timestamp) / 1_000f;
-
-			_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
+			//var timestamp = clockStopwatch.ElapsedMilliseconds;
+			//var secondsSinceLastTick = (timestamp - lastTimestamp) / 1_000f;
+			//var secondsSinceFirstTick = (lastTimestamp = timestamp) / 1_000f;
+			//
+			//_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
 
 			// Scheduled work.
 			GameLoopScheduler.AdvanceBy(clockStopwatch.Elapsed);
