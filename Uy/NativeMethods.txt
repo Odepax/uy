@@ -7,9 +7,6 @@ DispatchMessage
 E_ACCESSDENIED
 E_INVALIDARG
 EndPaint
-GET_WHEEL_DELTA_WPARAM
-GET_X_LPARAM
-GET_Y_LPARAM
 GetClientRect
 GetDpiForWindow
 GetMessage
@@ -20,13 +17,11 @@ GetSystemMetrics
 GetWindowLong
 GetWindowPlacement
 GetWindowRect
-HIWORD
 HWND_TOP
 IDC_ARROW
 IDI_APPLICATION
 LoadCursor
 LoadIcon
-LOWORD
 MonitorFromWindow
 PeekMessage
 PostQuitMessage
@@ -47,9 +42,7 @@ SIZE_MINIMIZED
 SIZE_RESTORED
 TranslateMessage
 UnregisterClass
-UnregisterClassEx
 VIRTUAL_KEY
-WINDOW_MESSAGE
 WM_ACTIVATEAPP
 WM_CHAR
 WM_CLOSE

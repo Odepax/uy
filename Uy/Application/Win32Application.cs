@@ -68,9 +68,8 @@ class Win32Application : IDisposable {
 	</summary>
 	**/
 	public void Dispose() {
-		Windows
-			.DisposeAll(kvp => kvp.Value)
-			.Clear();
+		Windows.DisposeAll(kvp => kvp.Value);
+		Windows.Clear();
 
 		DisposeDirectXDeviceIndependentResources();
 		UnregisterWin32WindowClass();

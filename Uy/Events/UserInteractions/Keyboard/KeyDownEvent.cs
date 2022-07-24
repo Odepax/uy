@@ -20,6 +20,7 @@ public class KeyDownEvent : KeyEvent {
 	public readonly int RepeatCount;
 
 	public bool IsRepeated => 0 < RepeatCount;
+	public bool IsNotRepeated => RepeatCount == 0;
 
 	public KeyDownEvent(Key hardwareKey, Key layoutKey, int repeatCount) : base(hardwareKey, layoutKey) {
 		RepeatCount = repeatCount;

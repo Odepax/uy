@@ -71,7 +71,7 @@ namespace Uy;
 		<i>Lerp anchors</i> return values corresponding to a <i>ratio</i>
 		proportional to the <see cref="Size"/> from the <see cref="LeftTopAnchor"/>.
 		E.g. <c><see cref="Box4"/>.<see cref="FromLeftTop(float, float, float, float)">FromLeftTop</see>(1, 7, 4, 15).<see cref="LerpAnchor">LerpAnchor</see>(<see langword="new"/>(0.5f, 0.2f))</c>
-		would return <c><see langword="new"/> <see cref="Vector2"/>(1 + 2, 7 + 3)</c>.
+		would return <c><see langword="new"/> <see cref="Vector2"/>(1 + 4 * 0.5f, 7 + 15 * 0.2f)</c>.
 	</para>
 	<para>
 		Setting <i>lerp anchors</i> repositions <see langword="this"/> <see cref="Box4"/>
@@ -79,7 +79,7 @@ namespace Uy;
 		coincides with the new value,
 		while leaving <see cref="Width"/> and <see cref="Height"/> untouched.
 		E.g. <c><see cref="Box4"/>.<see cref="FromLeftTop(float, float, float, float)">FromLeftTop</see>(1, 7, 4, 15).<see cref="WithLerpAnchor">WithLerpAnchor</see>(<see langword="new"/>(0.5f, 0.2f), <see cref="Vector2.Zero"/>)</c>
-		would return <c><see cref="Box4"/>.<see cref="FromLeftTop(float, float, float, float)">FromLeftTop</see>(0 - 2, 0 - 3, 4, 15)</c>.
+		would return <c><see cref="Box4"/>.<see cref="FromLeftTop(float, float, float, float)">FromLeftTop</see>(0 - 4 * 0.5f, 0 - 15 * 0.2f, 4, 15)</c>.
 	</para>
 	<para>
 		<u>About Sizes</u>

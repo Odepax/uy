@@ -249,9 +249,9 @@ class Win32Window : IDisposable {
 			IntPtr.Zero, // Specify nullptr to use the default adapter.
 			DriverType.Hardware,
 			DeviceCreationFlags.BgraSupport // This flag is required in order to enable compatibility with Direct2D.
-#if DEBUG
+			#if DEBUG
 				| DeviceCreationFlags.Debug // If the project is in a debug build, enable debugging via SDK Layers with this flag.
-#endif
+			#endif
 			,
 			new[] { // This array defines the ordering of feature levels that D3D should attempt to create.
 				D3FeatureLevel.Level_11_1,

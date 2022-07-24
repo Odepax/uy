@@ -375,6 +375,10 @@ public static class Vector2Extensions {
 	#endregion
 	#region Methods, some from Spaceshits, others from Box4
 
+	public static bool Equals(this Vector2 @this, Vector2 other, float delta) =>
+		   @this.X.Equals(other.X, delta)
+		&& @this.Y.Equals(other.Y, delta);
+
 	public static void OffsetBy(this ref Vector2 @this, float dxy) => @this.OffsetBy(new Vector2(dxy));
 	public static void OffsetBy(this ref Vector2 @this, float dx, float dy) => @this.OffsetBy(new Vector2(dx, dy));
 	public static void OffsetBy(this ref Vector2 @this, Vector2 offset) => @this += offset;
