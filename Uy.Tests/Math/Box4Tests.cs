@@ -178,15 +178,18 @@ class Box4Tests {
 		var b = Box4.FromLeftTop(3, 1, 2, -7);
 		var c = Box4.FromLeftTop(3, 1, -2, 7);
 		var d = Box4.FromLeftTop(3, 1, 2, 7);
+		var e = Box4.FromTo(2, 1, 1, 2);
 
 		a.Normalize();
 		b.Normalize();
 		c.Normalize();
 		d.Normalize();
+		e.Normalize();
 
 		Assert.AreEqual(Box4.FromLeftTop(1, -6, 2, 7), a);
 		Assert.AreEqual(Box4.FromLeftTop(3, -6, 2, 7), b);
 		Assert.AreEqual(Box4.FromLeftTop(1, 1, 2, 7), c);
 		Assert.AreEqual(Box4.FromLeftTop(3, 1, 2, 7), d);
+		Assert.AreEqual(Box4.FromTo(1, 1, 2, 2), e);
 	}
 }
