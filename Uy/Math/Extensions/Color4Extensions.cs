@@ -29,7 +29,7 @@ public static class Color4Extensions {
 	<summary>
 		<para>
 			CSS-like <i>hash</i> syntax,
-			e.g. <c>var orange = 0xFF4500.<see cref="ToRgb(uint)">ToRgb</see>()</c>.
+			e.g. <c>var orange = 0xFF4500.<see cref="ToRgba(uint)">ToRgb</see>()</c>.
 		</para>
 	</summary>
 	**/

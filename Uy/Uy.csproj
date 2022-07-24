@@ -3,7 +3,27 @@
 		<TargetFramework>net6.0-windows10.0.19041.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);1591;1573;0419</NoWarn>
+		<!-- GenerateDocumentationFile:true triggers 1591-warnings whenever a public object doesn't have documentation... -->
+		<!-- 1573-warnings are triggered when there IS a docstring, but SOME elements are missing, e.g. a parameter doesn't have documentation, which, they often wouldn't need anyway... -->
+		<!-- 0419-warnings are triggered where an ambiguous reference sneaks into cref doctag attributes, which VS2019 handles nicely anyway... -->
 	</PropertyGroup>
+
+	<PropertyGroup>
+		<Version>0.0.1</Version>
+		<Authors>Odepax</Authors>
+		<Description>Not just another .NET UI toolkit: this one is hopeless, and is advertized as being the wrong choice in any use case.</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageIcon>Icon-64.png</PackageIcon>
+		<PackageTags>UI;GUI</PackageTags>
+		<RepositoryUrl>https://github.com/Odepax/uy</RepositoryUrl>
+		<!-- <PackageProjectUrl>https://odepax.github.io/uy</PackageProjectUrl> -->
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="Icon-64.png" Pack="true" PackagePath=""/>
+	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="DynamicData" Version="7.9.4"/>
