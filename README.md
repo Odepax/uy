@@ -12,6 +12,11 @@ Install [Uy](https://www.nuget.org/packages/Uy/) from NuGet.
 Usage
 ----
 
+### Mantra
+
+> Priority to the API; make it discoverable and incremental.
+> Experiment outside of the main lib; integrate new ideas only once stable.
+
 ### Application
 
 #### Application bootstrapping

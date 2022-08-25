@@ -9,6 +9,17 @@ public static class ID2D1RenderTargetExtensions {
 	/**
 	<summary>
 		<para>
+			Alias of <c><paramref name="this"/>.<see cref="TransformScope(ID2D1RenderTarget, Matrix3x2)">TransformScope</see>(Matrix3x2.CreateRotation(<paramref name="rotation"/>) * <paramref name="this"/>.Transform);</c>
+		</para>
+	</summary>
+	**/
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static TScope PushRotation(this ID2D1RenderTarget @this, float rotation) =>
+		TransformScope(@this, Matrix3x2.CreateRotation(rotation) * @this.Transform);
+
+	/**
+	<summary>
+		<para>
 			Alias of <c><paramref name="this"/>.<see cref="TransformScope(ID2D1RenderTarget, Matrix3x2)">TransformScope</see>(Matrix3x2.CreateScale(<paramref name="scale"/>) * <paramref name="this"/>.Transform);</c>
 		</para>
 	</summary>

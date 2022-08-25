@@ -321,7 +321,7 @@ public static class Vector2Extensions {
 		</para>
 	</summary>
 	**/
-	public static float Direction(this Vector2 @this) => MathF.Atan2(@this.Y, @this.X);
+	public static AngleF Direction(this Vector2 @this) => AngleF.FromDirection(@this);
 	public static void SetDirection(this ref Vector2 @this, float value) {
 		var l = @this.Length();
 
@@ -359,7 +359,7 @@ public static class Vector2Extensions {
 	</returns>
 	**/
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	public static float DirectionTo(this Vector2 @this, Vector2 target) => MathF.Atan2(target.Y - @this.Y, target.X - @this.X);
+	public static AngleF DirectionTo(this Vector2 @this, Vector2 target) => AngleF.FromDirection(target - @this);
 
 	/**
 	<returns>
@@ -370,7 +370,7 @@ public static class Vector2Extensions {
 	</returns>
 	**/
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	public static float DirectionFrom(this Vector2 @this, Vector2 origin) => MathF.Atan2(@this.Y - origin.Y, @this.X - origin.X);
+	public static AngleF DirectionFrom(this Vector2 @this, Vector2 origin) => AngleF.FromDirection(@this - origin);
 
 	#endregion
 	#region Methods, some from Spaceshits, others from Box4
@@ -402,8 +402,8 @@ public static class Vector2Extensions {
 	public static void RelativeOffsetBy(this ref Vector2 @this, Vector2 offset) {
 		var d = @this.Direction();
 
-		@this.X += d.Cos() * offset.X - d.Sin() * offset.Y;
-		@this.Y += d.Sin() * offset.X + d.Cos() * offset.Y;
+		@this.X += d.Cos * offset.X - d.Sin * offset.Y;
+		@this.Y += d.Sin * offset.X + d.Cos * offset.Y;
 	}
 
 	public static Vector2 WithRelativeOffset(this Vector2 @this, float dxy) => @this.WithRelativeOffset(new Vector2(dxy));
@@ -412,24 +412,24 @@ public static class Vector2Extensions {
 		var d = @this.Direction();
 
 		return new(
-			@this.X + d.Cos() * offset.X - d.Sin() * offset.Y,
-			@this.Y + d.Sin() * offset.X + d.Cos() * offset.Y
+			@this.X + d.Cos * offset.X - d.Sin * offset.Y,
+			@this.Y + d.Sin * offset.X + d.Cos * offset.Y
 		);
 	}
 
 	public static void RelativeAngularOffsetBy(this ref Vector2 @this, float direction, float length) {
 		var d = @this.Direction();
 
-		@this.X += (d.Cos() + direction) * length;
-		@this.Y += (d.Sin() + direction) * length;
+		@this.X += (d.Cos + direction) * length;
+		@this.Y += (d.Sin + direction) * length;
 	}
 
 	public static Vector2 WithRelativeAngularOffset(this Vector2 @this, float direction, float length) {
 		var d = @this.Direction();
 
 		return new(
-			@this.X + (d.Cos() + direction) * length,
-			@this.Y + (d.Sin() + direction) * length
+			@this.X + (d.Cos + direction) * length,
+			@this.Y + (d.Sin + direction) * length
 		);
 	}
 
@@ -487,14 +487,27 @@ public static class Vector2Extensions {
 		@this.Y -= top + bottom;
 	}
 
-	public static Vector2 Deflated(this ref Vector2 @this, Margin4 margin) => @this.Deflated(margin.Top, margin.Right, margin.Bottom, margin.Left);
-	public static Vector2 Deflated(this ref Vector2 @this, float all) => @this.Deflated(all, all, all, all);
-	public static Vector2 Deflated(this ref Vector2 @this, float vertical, float horizontal) => @this.Deflated(vertical, horizontal, vertical, horizontal);
-	public static Vector2 Deflated(this ref Vector2 @this, float top, float horizontal, float bottom) => @this.Deflated(top, horizontal, bottom, horizontal);
-	public static Vector2 Deflated(this ref Vector2 @this, float top, float right, float bottom, float left) => new(
+	public static Vector2 Deflated(this Vector2 @this, Margin4 margin) => @this.Deflated(margin.Top, margin.Right, margin.Bottom, margin.Left);
+	public static Vector2 Deflated(this Vector2 @this, float all) => @this.Deflated(all, all, all, all);
+	public static Vector2 Deflated(this Vector2 @this, float vertical, float horizontal) => @this.Deflated(vertical, horizontal, vertical, horizontal);
+	public static Vector2 Deflated(this Vector2 @this, float top, float horizontal, float bottom) => @this.Deflated(top, horizontal, bottom, horizontal);
+	public static Vector2 Deflated(this Vector2 @this, float top, float right, float bottom, float left) => new(
 		@this.X + left + right,
 		@this.Y + top + bottom
 	);
+
+	public static void AxisAlign(this ref Vector2 @this) {
+		if (@this.X.Abs() < @this.Y.Abs())
+			@this.X = 0;
+
+		else @this.Y = 0;
+	}
+	
+	public static Vector2 AxisAligned(this Vector2 @this) {
+		@this.AxisAlign(); // @this is a copy, it's safe to modify it in place here.
+
+		return @this;
+	}
 
 	#endregion
 }

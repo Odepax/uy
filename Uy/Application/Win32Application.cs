@@ -108,8 +108,8 @@ class Win32Application : IDisposable {
 	public void RunGameLoop(CancellationToken stoppingToken) {
 		Logger.LogDebug("Entering game loop.");
 
-		var lastTimestamp = 0L;
-		var clockStopwatch = Stopwatch.StartNew();
+		//var lastTimestamp = 0L;
+		//var clockStopwatch = Stopwatch.StartNew();
 
 		GameLoopScheduler.AdvanceTo(DateTimeOffset.Now);
 
@@ -148,14 +148,14 @@ class Win32Application : IDisposable {
 			//_ = new GameLoopUpdateInfo(secondsSinceFirstTick, secondsSinceLastTick);
 
 			// Scheduled work.
-			GameLoopScheduler.AdvanceBy(clockStopwatch.Elapsed);
+			GameLoopScheduler.AdvanceTo(DateTimeOffset.Now);
 
 			// Render.
 			foreach (var window in Windows.Values)
 				window.RunRenderPass();
 		}
 
-		clockStopwatch.Stop();
+		//clockStopwatch.Stop();
 
 		Logger.LogDebug("Exited game loop.");
 	}

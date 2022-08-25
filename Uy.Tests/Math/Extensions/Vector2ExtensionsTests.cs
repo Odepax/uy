@@ -34,6 +34,30 @@ class Vector2ExtensionsTests {
 		new TestCaseData(new Vector2(-3f, -4f), new Vector2(-3f, 2f), 0.666_666f, new Vector2(-3f, 0f), new Vector2(0f, 4f)),
 	};
 
+	[Test]
+	[TestCaseSource(nameof(AxisAlign_and_AxisAligned_test_cases))]
+	public void AxisAlign_and_AxisAligned(Vector2 vector, Vector2 expected) {
+		var actual = vector.AxisAligned();
+		vector.AxisAlign();
+
+		AssertVector(expected, actual);
+		AssertVector(expected, vector);
+	}
+
+	static readonly TestCaseData[] AxisAlign_and_AxisAligned_test_cases = new[] {
+		new TestCaseData(new Vector2(0f, 0f), new Vector2(0f, 0f)),
+		new TestCaseData(new Vector2(15f, 0f), new Vector2(15f, 0f)),
+		new TestCaseData(new Vector2(0f, 42f), new Vector2(0f, 42f)),
+		new TestCaseData(new Vector2(15f, 42f), new Vector2(0f, 42f)),
+		new TestCaseData(new Vector2(15f, -42f), new Vector2(0f, -42f)),
+		new TestCaseData(new Vector2(-42f, -15f), new Vector2(-42f, 0f)),
+
+		new TestCaseData(new Vector2(-1f, -1f), new Vector2(-1f, 0f)),
+		new TestCaseData(new Vector2(+1f, -1f), new Vector2(1f, 0f)),
+		new TestCaseData(new Vector2(-1f, +1f), new Vector2(-1f, 0f)),
+		new TestCaseData(new Vector2(+1f, +1f), new Vector2(1f, 0f)),
+	};
+
 	static void AssertVector(Vector2 expected, Vector2 actual) {
 		Assert.AreEqual(expected.X, actual.X, 0.01, "Expected {0}, but was {1}", expected, actual);
 		Assert.AreEqual(expected.Y, actual.Y, 0.01, "Expected {0}, but was {1}", expected, actual);

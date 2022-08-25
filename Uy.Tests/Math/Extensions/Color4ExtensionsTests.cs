@@ -1,5 +1,4 @@
 ﻿using NUnit.Framework;
-using System;
 using Vortice.Mathematics;
 
 namespace Uy.Tests;
@@ -8,8 +7,10 @@ public class Color4ExtensionsTests {
 	#region Conversion extensions
 
 	[Test]
-	public void ToRgba() =>
+	public void ToRgba() {
 		Assert.AreEqual(new Color4(1, 1, 0, 0.2f), 0xFFFF0033.ToRgba());
+		Assert.AreEqual(new Color4(1, 1, 0, 0.2f), 0xFFFF00.ToRgba(0.2f));
+	}
 
 	[Test]
 	public void ToRgb() =>

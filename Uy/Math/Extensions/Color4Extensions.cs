@@ -29,7 +29,24 @@ public static class Color4Extensions {
 	<summary>
 		<para>
 			CSS-like <i>hash</i> syntax,
-			e.g. <c>var orange = 0xFF4500.<see cref="ToRgba(uint)">ToRgb</see>()</c>.
+			e.g. <c>var transparentOrange = 0xFF4500.<see cref="ToRgba(int, float)">ToRgba</see>(0.12f)</c>.
+		</para>
+	</summary>
+	**/
+	[MethodImpl(MethodImplOptions.AggressiveOptimization)]
+	public static Color4 ToRgba(this int @this, float a) =>
+		new(
+			((@this >> 16) & 0x0000ff) / 255f,
+			((@this >> 08) & 0x0000ff) / 255f,
+			((@this >> 00) & 0x0000ff) / 255f,
+			a
+		);
+	
+	/**
+	<summary>
+		<para>
+			CSS-like <i>hash</i> syntax,
+			e.g. <c>var orange = 0xFF4500.<see cref="ToRgb(int)">ToRgb</see>()</c>.
 		</para>
 	</summary>
 	**/
