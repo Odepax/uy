@@ -1,21 +1,19 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using Uy;
 using static Uy.Key;
 
-class GameWindowRootContent : IWindowRootContent, IDisposable {
-	readonly Game GameEngine;
+class GameWindowRootContent2 : IWindowRootContent, IDisposable {
+	readonly Game2 GameEngine;
 	readonly IWindowBridge WindowBridge;
+	readonly CompositeDisposable GameDisposables = new();
+	readonly List<ResourceDescriptor> DeviceResources = new();
+	readonly List<ResourceDescriptor> RepopulatingResources = new();
 
-	readonly CompositeDisposable ApplicationDisposables = new();
-	readonly CompositeDisposable DeviceDisposables = new();
-	readonly CompositeDisposable ResizeDisposables = new();
-
-	bool Resized = true;
-
-	public GameWindowRootContent(Game gameEngine, IDeviceIndependentResourceDictionary applicationResources, IWindowBridge windowBridge) {
+	public GameWindowRootContent2(Game2 gameEngine, IDeviceIndependentResourceDictionary applicationResources, IWindowBridge windowBridge) {
 		GameEngine = gameEngine;
 		WindowBridge = windowBridge;
 
@@ -29,31 +27,30 @@ class GameWindowRootContent : IWindowRootContent, IDisposable {
 				GameEngine.Window.Size = size;
 				GameEngine.Window.Box = Box4.FromLeftTop(Vector2.Zero, size);
 				GameEngine.Window.DpiScale = WindowBridge.DpiScale;
-
-				ResizeDisposables.Clear();
-				Resized = true;
 			})
-			.DisposeWith(ApplicationDisposables);
+			.DisposeWith(GameDisposables);
 
-		GameEngine.Clock.Start(WindowBridge.GameLoopScheduler).DisposeWith(ApplicationDisposables);
-		GameEngine.OnLoad(ApplicationDisposables);
-		GameEngine.OnApplicationInit(applicationResources, ApplicationDisposables);
+		GameEngine.Clock.Start(WindowBridge.GameLoopScheduler).DisposeWith(GameDisposables);
+		GameEngine.OnLoad(GameDisposables);
+
+		var ApplicationResources = new List<ResourceDescriptor>();
+		var RC = new ResourceCollection(ApplicationResources, DeviceResources, RepopulatingResources, WindowBridge.GameLoopScheduler);
+		GameEngine.OnLoad(RC, GameDisposables);
+
+		var RP1 = new ResourceProvider1(applicationResources);
+		foreach (var descriptor in ApplicationResources)
+			descriptor.Populate(RP1, applicationResources);
 	}
 
 	public void OnDeviceInit(DeviceInitInfo info) {
-		GameEngine.OnDeviceInit(info.ApplicationResources, info.DeviceResources, DeviceDisposables);
+		var RP2 = new ResourceProvider2(info.ApplicationResources, info.DeviceResources);
+		foreach (var descriptor in DeviceResources)
+			descriptor.Populate(RP2, info.DeviceResources);
 	}
 
-	public void OnDeviceDispose(DeviceDisposeInfo info) {
-		ResizeDisposables.Clear();
-		DeviceDisposables.Clear();
-	}
+	public void OnDeviceDispose(DeviceDisposeInfo info) {}
 
-	public void Dispose() {
-		ResizeDisposables.Dispose();
-		DeviceDisposables.Dispose();
-		ApplicationDisposables.Dispose();
-	}
+	public void Dispose() => GameDisposables.Dispose();
 
 	public void OnKeyDown(KeyDownEvent @event) {
 		if (@event.ContinueProcessing && @event.IsNotRepeated) {
@@ -96,17 +93,26 @@ class GameWindowRootContent : IWindowRootContent, IDisposable {
 	}
 
 	public void OnRender(RenderInfo info) {
-		if (Resized) {
-			Resized = false;
-			GameEngine.OnResizeInit(info.ApplicationResources, info.DeviceResources, ResizeDisposables);
-		}
-
 		// Time keeping.
 		GameEngine.Clock.Update();
 
+		// Resources maintenance.
+		var RP1 = new ResourceProvider1(info.ApplicationResources);
+		var RP2 = new ResourceProvider2(info.ApplicationResources, info.DeviceResources);
+
+		foreach(var descriptor in RepopulatingResources)
+			descriptor.Repopulate(RP1, RP2, info.ApplicationResources, info.DeviceResources);
+
 		// Game logic.
-		GameEngine.OnUpdate();
-		GameEngine.OnRender(info.ApplicationResources, info.DeviceResources);
+		var _updateStartTime = GameEngine.Clock.ElapsedMilliseconds;
+		{
+			GameEngine.OnUpdate(RP2);
+		}
+		var _updateEndTime = GameEngine.Clock.ElapsedMilliseconds;
+
+		GameEngine.Clock.UpdateDuration = _updateEndTime - _updateStartTime;
+
+		GameEngine.OnRender(RP2);
 
 		// Arrange next frame.
 		WindowBridge.RequestRender();

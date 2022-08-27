@@ -1,17 +1,21 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 
 struct Clock {
 	public float FPS;
 	public float SPF;
 	public TimeSpan Time;
+	public IScheduler GameLoopScheduler;
+	public double UpdateDuration;
 
 	Stopwatch Watch;
 
 	public double ElapsedMilliseconds => Watch.Elapsed.TotalMilliseconds;
 
-	public IDisposable Start() {
+	public IDisposable Start(IScheduler gameLoopScheduler) {
+		GameLoopScheduler = gameLoopScheduler;
 		Watch = Stopwatch.StartNew();
 
 		return Disposable.Create(Watch.Stop);

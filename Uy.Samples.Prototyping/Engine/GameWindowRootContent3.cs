@@ -1,21 +1,20 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using Uy;
 using static Uy.Key;
 
-class GameWindowRootContent : IWindowRootContent, IDisposable {
-	readonly Game GameEngine;
+class GameWindowRootContent3 : IWindowRootContent, IDisposable {
+	readonly Game3 GameEngine;
 	readonly IWindowBridge WindowBridge;
-
+	readonly List<DeviceResourceFactory> DeviceResources = new();
+	readonly List<VolatileResourceDescriptor> VolatileResources = new();
 	readonly CompositeDisposable ApplicationDisposables = new();
 	readonly CompositeDisposable DeviceDisposables = new();
-	readonly CompositeDisposable ResizeDisposables = new();
 
-	bool Resized = true;
-
-	public GameWindowRootContent(Game gameEngine, IDeviceIndependentResourceDictionary applicationResources, IWindowBridge windowBridge) {
+	public GameWindowRootContent3(Game3 gameEngine, IDeviceIndependentResourceDictionary applicationResources, IWindowBridge windowBridge) {
 		GameEngine = gameEngine;
 		WindowBridge = windowBridge;
 
@@ -29,31 +28,27 @@ class GameWindowRootContent : IWindowRootContent, IDisposable {
 				GameEngine.Window.Size = size;
 				GameEngine.Window.Box = Box4.FromLeftTop(Vector2.Zero, size);
 				GameEngine.Window.DpiScale = WindowBridge.DpiScale;
-
-				ResizeDisposables.Clear();
-				Resized = true;
 			})
 			.DisposeWith(ApplicationDisposables);
 
+		var ApplicationResources = new List<ApplicationResourceFactory>();
+		var R = new ResourceCollection2(ApplicationResources, DeviceResources, VolatileResources, WindowBridge.GameLoopScheduler);
+
 		GameEngine.Clock.Start(WindowBridge.GameLoopScheduler).DisposeWith(ApplicationDisposables);
 		GameEngine.OnLoad(ApplicationDisposables);
-		GameEngine.OnApplicationInit(applicationResources, ApplicationDisposables);
+		GameEngine.OnLoad(in R, ApplicationDisposables);
+
+		foreach (var factory in ApplicationResources)
+			factory.Invoke(applicationResources, ApplicationDisposables);
 	}
 
 	public void OnDeviceInit(DeviceInitInfo info) {
-		GameEngine.OnDeviceInit(info.ApplicationResources, info.DeviceResources, DeviceDisposables);
+		foreach (var factory in DeviceResources)
+			factory.Invoke(info.ApplicationResources, info.DeviceResources, DeviceDisposables);
 	}
 
-	public void OnDeviceDispose(DeviceDisposeInfo info) {
-		ResizeDisposables.Clear();
-		DeviceDisposables.Clear();
-	}
-
-	public void Dispose() {
-		ResizeDisposables.Dispose();
-		DeviceDisposables.Dispose();
-		ApplicationDisposables.Dispose();
-	}
+	public void OnDeviceDispose(DeviceDisposeInfo info) => DeviceDisposables.Dispose();
+	public void Dispose() => ApplicationDisposables.Dispose();
 
 	public void OnKeyDown(KeyDownEvent @event) {
 		if (@event.ContinueProcessing && @event.IsNotRepeated) {
@@ -96,16 +91,22 @@ class GameWindowRootContent : IWindowRootContent, IDisposable {
 	}
 
 	public void OnRender(RenderInfo info) {
-		if (Resized) {
-			Resized = false;
-			GameEngine.OnResizeInit(info.ApplicationResources, info.DeviceResources, ResizeDisposables);
-		}
-
 		// Time keeping.
 		GameEngine.Clock.Update();
 
+		// Resources maintenance.
+		foreach(var descriptor in VolatileResources)
+			descriptor.Sync(info.ApplicationResources, info.DeviceResources, ApplicationDisposables, DeviceDisposables);
+
 		// Game logic.
-		GameEngine.OnUpdate();
+		var _updateStartTime = GameEngine.Clock.ElapsedMilliseconds;
+		{
+			GameEngine.OnUpdate(info.ApplicationResources, info.DeviceResources);
+		}
+		var _updateEndTime = GameEngine.Clock.ElapsedMilliseconds;
+
+		GameEngine.Clock.UpdateDuration = _updateEndTime - _updateStartTime;
+
 		GameEngine.OnRender(info.ApplicationResources, info.DeviceResources);
 
 		// Arrange next frame.

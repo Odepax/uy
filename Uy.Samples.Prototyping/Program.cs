@@ -17,7 +17,7 @@ Host
 	.ConfigureServices(services => {
 		services.AddUy<GameWindowRootContent>();
 		services.AddTransient<GameWindowRootContent>();
-		services.AddTransient<Game>();
+		services.AddTransient<Game, PongGame>();
 	})
 	.Build()
 	.Run();
