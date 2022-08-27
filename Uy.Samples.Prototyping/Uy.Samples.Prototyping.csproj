@@ -9,6 +9,8 @@
 	<ItemGroup>
 		<EmbeddedResource Include="Games\Pong\Sprite.svg"/>
 		<EmbeddedResource Include="Games\Pong\JetBrainsMono-Regular.ttf"/>
+
+		<Content Include="Games\Pong\Legal\*" CopyToOutputDirectory="PreserveNewest"/>
 	</ItemGroup>
 
 	<ItemGroup>

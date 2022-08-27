@@ -14,12 +14,6 @@ using Vortice.Mathematics;
 using static Measure;
 using BitmapInterpolationMode = Vortice.Direct2D1.BitmapInterpolationMode;
 
-// TODO: Commit
-// TODO: push
-// TODO: remove _games
-// TODO: Take screenshots
-// TODO: Trace libs licenses
-// TODO: Trace JB font license
 // TODO: commit
 // TODO: push
 // TODO: Deploy V2 to itch.io
