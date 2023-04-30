@@ -4,4 +4,4 @@ Uy
 Installation
 ----
 
-Install the [Uy](https://www.nuget.org/packages/Uy) NuGet package.
+Install the [Odepax.Uy](https://www.nuget.org/packages/Odepax.Uy) NuGet package.

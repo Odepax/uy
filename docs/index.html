@@ -26,9 +26,9 @@
 				--BACKGROUND: #1f1c21;
 				--FOREGROUND: #f0e0b2;
 				--SHADOW: #000000;
-				--LIME: #95ea1c;
-				--TEAL: #60d48b;
-				--BLUE: #32bfea;
+				--ACCENT-1: #95ea1c;
+				--ACCENT-2: #60d48b;
+				--ACCENT-3: #32bfea;
 			}
 			* {
 				margin: 0;
@@ -69,6 +69,18 @@
 				font-size: 24px;
 				font-weight: 300;
 			}
+			nav {
+				padding: 64px;
+				text-align: center;
+			}
+			a {
+				display: inline-block;
+				padding: 0 16px;
+				color: var(--ACCENT-3);
+			}
+			a:hover, a:focus {
+				color: var(--ACCENT-1);
+			}
 		</style>
 	</head>
 	<body>
@@ -79,6 +91,10 @@
 				<strong>Not just another .NET UI toolkit: this one is hopeless, and is advertized as being the wrong choice in any use case.</strong>
 			</p>
 		</header>
+		<nav>
+			<a href="https://github.com/Odepax/uy/discussions">Discussions</a>
+			<a href="https://github.com/Odepax/uy/issues">Issues</a>
+		</nav>
 		<footer>
 			<p>
 				Copyright &copy; 2022 Odepax
